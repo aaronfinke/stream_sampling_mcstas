@@ -1,0 +1,8 @@
+julia 
+jill 
+juliacall 
+ipython 
+scipp 
+h5py 
+numpy 
+matplotlib
