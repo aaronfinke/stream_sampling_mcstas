@@ -12,7 +12,7 @@ import matplotlib.animation as animation
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 
-from typing import List, Any
+from typing import List, Any, Dict
 
 from juliacall import Main as jl
 jl.include("samping_toNexus.jl")
@@ -21,7 +21,7 @@ mpl.rcParams["animation.embed_limit"] = 500
 
 NMX_JSON_PATH = "/Users/aaronfinke/nmx_mcstas/nmx-dynamic.json"
 
-def write_to_nexus(fp:h5py.File, entry: List[Any]):
+def write_to_nexus(fp:h5py.File|h5py.Dataset|h5py.Group, entry: Dict):
     if entry.get("type") == "group":
         # create group
         new_group = fp.create_group(entry["name"])
