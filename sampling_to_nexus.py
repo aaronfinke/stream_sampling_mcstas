@@ -15,11 +15,9 @@ import matplotlib.pyplot as plt
 from typing import List, Any, Dict
 
 from juliacall import Main as jl
-jl.include("samping_toNexus.jl")
+jl.include("sampling_toNexus.jl")
 
 mpl.rcParams["animation.embed_limit"] = 500
-
-NMX_JSON_PATH = "/Users/aaronfinke/nmx_mcstas/nmx-dynamic.json"
 
 def write_to_nexus(fp:h5py.File|h5py.Dataset|h5py.Group, entry: Dict):
     if entry.get("type") == "group":
@@ -50,13 +48,13 @@ def do_sampling(filename:str, range:int = 3, n:int = 10^5) -> List[np.ndarray]:
     # np.save("output.py", sampled)
     return sampled
 
-def load_json_dict():
-    if not Path(NMX_JSON_PATH).exists():
-        raise FileNotFoundError(f"File not found: {NMX_JSON_PATH}")
-    return json.load(open(NMX_JSON_PATH))
+def load_json_dict(json_path):
+    if not Path(json_path).exists():
+        raise FileNotFoundError(f"File not found: {json_path}")
+    return json.load(open(json_path))
 
-def create_nexus_file(output_file: str, sampled: List[np.ndarray]):
-    metadata_dict = load_json_dict()
+def create_nexus_file(output_file: str, sampled: List[np.ndarray], json_template:str):
+    metadata_dict = load_json_dict(json_template)
     subtopics = metadata_dict["children"][0]
 
     with h5py.File(output_file, "w") as fp:
@@ -212,6 +210,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Sample HDF5 data and create NeXus file")
     parser.add_argument("input_file", type=str, help="Input HDF5 file path")
     parser.add_argument("output_file", type=str, help="Output NeXus file path")
+    parser.add_argument("-j", "--json-file", type=str, help="Path to json template")
     parser.add_argument(
         "--do-histogram", action="store_true", help="Generate histogram data"
     )
@@ -221,10 +220,12 @@ def parse_args():
 
 def main():
     args = parse_args()
+    if not Path(args.json_file).exists():
+        raise FileNotFoundError(f"File {args.json_file} not found.")
     sampled = do_sampling(args.input_file, args.range, args.n_samples)
     if Path(args.output_file).exists():
         print(f"Warning: overwriting {args.output_file}...")
-    create_nexus_file(args.output_file, sampled)
+    create_nexus_file(args.output_file, sampled, args.json_file)
     if args.do_histogram:
         tof_bins = get_tof_bins(sampled)
         print("Generating histogram...")
