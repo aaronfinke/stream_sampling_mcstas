@@ -15,7 +15,7 @@ import matplotlib.pyplot as plt
 from typing import List, Any
 
 from juliacall import Main as jl
-jl.include("sampling_toNexus.jl")
+jl.include("samping_toNexus.jl")
 
 mpl.rcParams["animation.embed_limit"] = 500
 
@@ -41,12 +41,13 @@ def write_to_nexus(fp:h5py.File, entry: List[Any]):
 
 def do_sampling(filename:str, range:int = 3, n:int = 10^5) -> List[np.ndarray]:
     rangeval = f"0:{range-1}"
-    eval_statement = f'sample_frames("{filename}",{rangeval},{n},AlgWRSWRSKIP())'
+    eval_statement = f'sample_frames("{filename}", {rangeval}, {n}, AlgWRSWRSKIP())'
     print(f"Running {eval_statement} ...")
     t1 = time.perf_counter()
     sampled_jl = jl.seval(eval_statement)
     print(f"... done. Took {time.perf_counter()-t1:.2f} s.")
     sampled = [x.to_numpy() for x in sampled_jl]
+    # np.save("output.py", sampled)
     return sampled
 
 def load_json_dict():
@@ -65,8 +66,8 @@ def create_nexus_file(output_file: str, sampled: List[np.ndarray]):
             datagroup.create_dataset('cue_index',data=0)
             datagroup.create_dataset('cue_timestamp_0',data=0)
             sampled_index = sampled[index]
-            event_ids = np.array([int(x[0]) for x in sampled_index], dtype=int)
-            toas = np.array([int(x[1]*1e9) for x in sampled_index], dtype=float)
+            event_ids = sampled_index["f0"].astype(int)
+            toas = sampled_index["f1"]*1e9
             datagroup.create_dataset("event_id", data=event_ids)
             t_offset = datagroup.create_dataset("event_time_offset",data=toas)
             t_offset.attrs['units'] = 'ns'
@@ -84,7 +85,7 @@ def get_tof_bins(results: List[np.ndarray], n=50):
     tofmax = 0
     tofmin = np.inf
     for data in results:
-        alltofs = np.array([x[1] for x in data])  # time values
+        alltofs = data["f1"] # time values
         tofs_max = alltofs.max()
         if tofs_max > tofmax:
             tofmax = tofs_max
@@ -105,8 +106,8 @@ def make_histogram(data_list: List, time_bin_edges: np.ndarray) -> List[np.ndarr
     pixel_counts_per_bin = np.zeros((n_pixels, n_time_bins))
 
     for data in data_list:
-        pixids = np.array([int(x[0]) for x in data])  # pixel IDs
-        times = np.array([x[1] for x in data])  # time values
+        pixids = data["f0"].astype(int)
+        times = data["f1"]
 
         # Assign each event to a time bin
         time_bin_indices = np.digitize(times, time_bin_edges) - 1
@@ -130,6 +131,7 @@ def make_histogram(data_list: List, time_bin_edges: np.ndarray) -> List[np.ndarr
     # detector_time_series_corrected = detector_time_series.transpose((1, 2, 0))
     for i, data in enumerate(data_panels):
         print(f"Shape of histogram {i}: {data.shape}")
+    # np.save("data.npy", data_panels)
     return data_panels
 
 

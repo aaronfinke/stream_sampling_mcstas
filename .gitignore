@@ -1,3 +1,5 @@
 *.h5
 *.gif
 *.ipynb
+*.npy
+*.json
