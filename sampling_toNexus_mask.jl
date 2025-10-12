@@ -6,7 +6,7 @@ function createMask(xrange::AbstractRange,yrange::AbstractRange,
     y = collect(yrange)
     offset = detector_id * grid_width * grid_height
     ids2d = y .* grid_width .+ x' .+ offset
-    return vec(ids2d)
+    return BitSet(ids2d)
 end
 
 function sample_frame_mask(filename, index, rng, n, alg)
@@ -20,9 +20,8 @@ function sample_frame_mask(filename, index, rng, n, alg)
         println(ceil(Int, totalsize/chunksize))
         for ch in chunks(1:totalsize, n=ceil(Int, totalsize/chunksize))
             chunk_data = dset[:, ch]
-            filtered_data = chunk_data[:,.!(in.(chunk_data[5,:], Ref(mask_set)))]
-            @inbounds for c in eachcol(filtered_data)
-                fit!(rs, (c[5], c[6]), c[1])
+            @inbounds for c in eachcol(chunk_data)
+                !(c[5] in mask_set) && fit!(rs, (c[5], c[6]), c[1])
             end
         end
     end
