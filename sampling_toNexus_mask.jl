@@ -6,7 +6,7 @@ function createMask(xrange::AbstractRange,yrange::AbstractRange,
     y = collect(yrange)
     offset = detector_id * grid_width * grid_height
     ids2d = y .* grid_width .+ x' .+ offset
-    return Set(ids2d)
+    return BitSet(ids2d)
 end
 
 function sample_frame_mask(filename, index, rng, n, alg)
