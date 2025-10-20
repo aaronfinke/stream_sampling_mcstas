@@ -6,6 +6,7 @@ import numpy as np
 import time
 import argparse
 from pathlib import Path
+from functools import partial
 
 import matplotlib.animation as animation
 import matplotlib as mpl
@@ -50,16 +51,20 @@ def do_sampling(filename:str, range:int = 3, n:int = 10^5) -> List[np.ndarray]:
     sampled = [x.to_numpy() for x in sampled_jl]
     return sampled
 
+def _eval_sampling_mpi(i: int, filename: str, n: int = 10 ^ 8):
+    eval_str = (
+        f'sample_frame("{filename}", {i}, Xoshiro(rand(UInt)), {n}, AlgWRSWRSKIP())'
+    )
+    print(f"Running {eval_str} ...", end="")
+    sampled_jl = jl.seval(eval_str)
+    print("... done.")
+    return sampled_jl.to_numpy()
+
+
 def do_sampling_mpi(filename:str, det_ranges:int = 3, n:int = 10^8) -> List[np.ndarray]:
-    def eval_jl(i):
-        eval_str = f'sample_frame("{filename}", {i}, Xoshiro(rand(UInt)), {n}, AlgWRSWRSKIP())'
-        print(f"Running {eval_str} ...", end="")
-        sampled_jl = jl.seval(eval_str)
-        print("... done.")
-        return sampled_jl.to_numpy()
     t1 = time.perf_counter()
     with Pool(det_ranges) as p:
-        sampling_results = p.map(eval_jl, list(range(det_ranges)))
+        sampling_results = p.map(partial(_eval_sampling_mpi, filename=filename, n=n), list(range(det_ranges)))
     t2 = time.perf_counter()
     print(f"Total sampling time: {t2-t1} s.")
     return sampling_results
