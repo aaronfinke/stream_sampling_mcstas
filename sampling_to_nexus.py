@@ -10,6 +10,7 @@ from pathlib import Path
 import matplotlib.animation as animation
 import matplotlib as mpl
 import matplotlib.pyplot as plt
+from multiprocessing import Pool
 
 from typing import List, Any, Dict
 
@@ -44,8 +45,21 @@ def do_sampling(filename:str, range:int = 3, n:int = 10^5) -> List[np.ndarray]:
     sampled_jl = jl.seval(eval_statement)
     print(f"... done. Took {time.perf_counter()-t1:.2f} s.")
     sampled = [x.to_numpy() for x in sampled_jl]
-    # np.save("output.py", sampled)
     return sampled
+
+def do_sampling_mpi(filename:str, det_ranges:int = 3, n:int = 10^8) -> List[np.ndarray]:
+    def eval_jl(i):
+        eval_str = f'sample_frame("{filename}", {i}, Xoshiro(rand(UInt)), {n}, AlgWRSWRSKIP())'
+        print(f"Running {eval_str} ...", end="")
+        sampled_jl = jl.seval(eval_str)
+        print("... done.")
+        return sampled_jl.to_numpy()
+    t1 = time.perf_counter()
+    with Pool(det_ranges) as p:
+        sampling_results = p.map(eval_jl, list(range(det_ranges)))
+    t2 = time.perf_counter()
+    print(f"Total sampling time: {t2-t1} s.")
+    return sampling_results
 
 def load_json_dict(json_path):
     if not Path(json_path).exists():
@@ -222,15 +236,19 @@ def parse_args():
     parser.add_argument(
         "--do-histogram", action="store_true", help="Generate histogram data"
     )
+    parser.add_argument("--do-mpi",action="store_true", help="Do multiprocessing")
     parser.add_argument("--range", type=int, default=3, help="Number of panels (default: 3)")
-    parser.add_argument("--n-samples", type=int, default=10**5, help="Number of samples (default: 100000)")
+    parser.add_argument("--n-samples", type=int, default=10**8, help="Number of samples (default: 100000)")
     return parser.parse_args()
 
 def main():
     args = parse_args()
     if not Path(args.json_file).exists():
         raise FileNotFoundError(f"File {args.json_file} not found.")
-    sampled = do_sampling(args.input_file, args.range, args.n_samples)
+    if args.do_mpi:
+        sampled = do_sampling_mpi(args.input_file, args.range, args.n_samples)
+    else:
+        sampled = do_sampling(args.input_file, args.range, args.n_samples)
     if Path(args.output_file).exists():
         print(f"Warning: overwriting {args.output_file}...")
     create_nexus_file(args.output_file, sampled, args.json_file)
