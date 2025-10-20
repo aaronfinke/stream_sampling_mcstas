@@ -15,9 +15,12 @@ from multiprocessing import Pool
 from typing import List, Any, Dict
 
 from juliacall import Main as jl
-jl.include("sampling_toNexus.jl")
+julia_path = Path(__file__).parent
+jl.include(str(julia_path / "sampling_toNexus.jl"))
 
 mpl.rcParams["animation.embed_limit"] = 500
+
+NMX_JSON_PATH = "/project/project_465002030/nmx-dynamic.json"
 
 def write_to_nexus(fp:h5py.File|h5py.Dataset|h5py.Group, entry: Dict):
     if entry.get("type") == "group":
