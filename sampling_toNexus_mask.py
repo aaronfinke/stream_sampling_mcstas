@@ -87,8 +87,12 @@ def create_nexus_file(output_file: str, sampled: List[np.ndarray]):
 
 
 def get_tof_bins(results: List[np.ndarray], n=50):
-    tofmin = 0.07173532
-    tofmax = 0.144122412
+    """
+    hardcoding the tof bins as NMX-specific.
+    Any events longer than 144 ms are probably erroneous.
+    """
+    tofmin = 0.071
+    tofmax = 0.145
     tofs = np.linspace(tofmin, tofmax, n)
     print(f"tof_min: {tofmin}, tof_max: {tofmax}")
     return tofs
@@ -104,7 +108,7 @@ def make_histogram(data_list: List, time_bin_edges: np.ndarray) -> List[np.ndarr
 
     for data in data_list:
         pixids = data["f0"].astype(int)
-        times = data["f1"]
+        times = data["f1"] / 1e9
 
         # Assign each event to a time bin
         time_bin_indices = np.digitize(times, time_bin_edges) - 1
