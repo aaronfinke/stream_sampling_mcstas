@@ -93,16 +93,12 @@ def create_nexus_file(output_file: str, sampled: List[np.ndarray], json_template
             evt_time_zero.attrs["units"] = "ns"
 
 def get_tof_bins(results: List[np.ndarray], n=50):
-    tofmax = 0
-    tofmin = np.inf
-    for data in results:
-        alltofs = data["f1"] # time values
-        tofs_max = alltofs.max()
-        if tofs_max > tofmax:
-            tofmax = tofs_max
-        tofs_min = alltofs.min()
-        if tofs_min < tofmin:
-            tofmin = tofs_min
+    """
+    hardcoding the tof bins as NMX-specific.
+    Any events longer than 144 ms are probably erroneous.
+    """
+    tofmin = 0.071
+    tofmax = 0.145
     tofs = np.linspace(tofmin, tofmax, n)
     print(f"tof_min: {tofmin}, tof_max: {tofmax}")
     return tofs
