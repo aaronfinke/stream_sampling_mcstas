@@ -1,6 +1,5 @@
 
 import scipp
-import scippnexus
 import h5py
 import json
 import numpy as np
@@ -105,7 +104,7 @@ def make_histogram(data_list: List, time_bin_edges: np.ndarray) -> List[np.ndarr
 
     for data in data_list:
         pixids = data["f0"].astype(int)
-        times = data["f1"]
+        times = data["f1"] / 1e9        # data stored in ns
 
         # Assign each event to a time bin
         time_bin_indices = np.digitize(times, time_bin_edges) - 1
@@ -133,26 +132,35 @@ def make_histogram(data_list: List, time_bin_edges: np.ndarray) -> List[np.ndarr
     return data_panels
 
 
-def make_animation(datasets: List[np.ndarray], tofs: np.ndarray, folder: Path, fps=5):
-    # Process all three datasets
-    processed_data = []
-    global_vmin, global_vmax = np.inf, 0
+def _sigma_limits(
+    arr: np.ndarray, low_sigma: float = 0.0, high_sigma: float = 2.0
+) -> tuple[float, float]:
+    vals = arr[np.isfinite(arr) & (arr > 0)]
+    if vals.size == 0:
+        return 1e-8, 1.0
+    mu = float(np.mean(vals))
+    sigma = float(np.std(vals))
+    vmin = max(vals.min(), mu - low_sigma * sigma)
+    vmax = min(vals.max(), mu + high_sigma * sigma)
+    if vmin >= vmax:
+        vmax = vmin * 10.0
+    return vmin, vmax
 
-    for i, data in enumerate(datasets):
-        # Calculate min/max for each panel
-        data_nonzero = data[data > 0]
-        if len(data_nonzero) > 0:
-            vmin, vmax = data_nonzero.min(), data_nonzero.max()
-            global_vmin = min(global_vmin, vmin)
-            global_vmax = max(global_vmax, vmax)
-        else:
-            vmin = 1e-8
 
-        # Set background to minimum value for log scale
-        data[data <= 0] = vmin
-        processed_data.append(data)
+def make_animation(
+    datasets: List[np.ndarray],
+    tofs: np.ndarray,
+    folder: Path = Path.cwd(),
+    fps=5,
+    low_sigma=0.0,
+    high_sigma=2.0,
+):
+    # Compute global limits across all panels/frames
+    combined = np.concatenate([d[d > 0].ravel() for d in datasets if d.size > 0])
+    vmin, vmax = _sigma_limits(combined, low_sigma=low_sigma, high_sigma=high_sigma)
 
-    # print(f"Global data range: {global_vmin:.2e} to {global_vmax:.2e}")
+    # Optionally clip data to these limits (prevents outliers dominating colorbar)
+    processed_data = [np.clip(np.where(d <= 0, vmin, d), vmin, vmax) for d in datasets]
 
     # Create figure with three subplots - closer spacing
     fig, axes = plt.subplots(1, 3, figsize=(18, 6))
@@ -231,7 +239,7 @@ def main():
         print("Generating histogram...")
         histo = make_histogram(sampled,tof_bins)
         print("Generating animation...")
-        make_animation(histo,tof_bins, Path.cwd())
+        make_animation(histo, tof_bins, Path(args.output_file).parent)
 
 if __name__ == '__main__':
     main()
