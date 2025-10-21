@@ -4,3 +4,8 @@
 *.npy
 *.json
 *.sif
+*.txt
+.gitignore
+__pycache__/
+*.py[codz]
+*$py.class

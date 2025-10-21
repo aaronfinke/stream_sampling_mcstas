@@ -174,7 +174,12 @@ def make_animation(
             origin="lower",
             # norm=LogNorm(vmin=global_vmin, vmax=global_vmax),
         )
-        ax.set_title(f"Panel {i} - Frame: 0 / {data.shape[2] - 1}")
+        if i == 1:
+            ax.set_title(
+                f"Panel {i} - Frame: 0 / {data.shape[2] - 1}, tof {tofs[i] * 1e6:.1f} ms"
+            )
+        else:
+            ax.set_title(f"Panel {i} - Frame: 0 / {data.shape[2] - 1}")
         ax.set_xlabel("X pixel")
 
         # Only show Y label on leftmost panel
