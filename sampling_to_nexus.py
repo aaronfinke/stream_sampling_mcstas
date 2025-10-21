@@ -47,8 +47,7 @@ def do_sampling(filename:str, range:int = 3, n:int = 10^5) -> List[np.ndarray]:
     t1 = time.perf_counter()
     sampled_jl = jl.seval(eval_statement)
     print(f"... done. Took {time.perf_counter()-t1:.2f} s.")
-    sampled = [x.to_numpy() for x in sampled_jl]
-    # np.save("output.py", sampled)
+    sampled = sampled_jl.to_numpy()
     return sampled
 
 def load_json_dict(json_path):
