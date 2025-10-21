@@ -40,15 +40,22 @@ def write_to_nexus(fp:h5py.File|h5py.Dataset|h5py.Group, entry: Dict):
             for attribute in entry.get("attributes"):
                 dset.attrs[attribute["name"]] = attribute["values"]
 
+def redistribute_sampling(sampled):
+    pixids = sampled["f0"]
+    d1 = sampled[pixids < 1280 * 1280]
+    d0 = sampled[(1280 * 1280 <= pixids) & (pixids < 2 * 1280 * 1280)]
+    d2 = sampled[(pixids >= 2 * 1280 * 1280)]
+    return [d0,d1,d2]
+
 def do_sampling(filename:str, range:int = 3, n:int = 10^5) -> List[np.ndarray]:
     rangeval = f"0:{range-1}"
-    eval_statement = f'sample_frames("{filename}", {rangeval}, {n}, AlgWRSWRSKIP())'
+    eval_statement = f'sample_all_frames("{filename}", {rangeval}, {n}, AlgWRSWRSKIP())'
     print(f"Running {eval_statement} ...")
     t1 = time.perf_counter()
     sampled_jl = jl.seval(eval_statement)
     print(f"... done. Took {time.perf_counter()-t1:.2f} s.")
     sampled = sampled_jl.to_numpy()
-    return sampled
+    return redistribute_sampling(sampled)
 
 def load_json_dict(json_path):
     if not Path(json_path).exists():
@@ -67,7 +74,7 @@ def create_nexus_file(output_file: str, sampled: List[np.ndarray], json_template
             datagroup.create_dataset('cue_timestamp_0',data=0)
             sampled_index = sampled[index]
             event_ids = sampled_index["f0"].astype(int)
-            toas = sampled_index["f1"]*1e9
+            toas = sampled_index["f1"].copy() * 1e9
             datagroup.create_dataset("event_id", data=event_ids)
             t_offset = datagroup.create_dataset("event_time_offset",data=toas)
             t_offset.attrs['units'] = 'ns'
@@ -85,6 +92,7 @@ def get_tof_bins(results: List[np.ndarray], n=50):
     """
     hardcoding the tof bins as NMX-specific.
     Any events longer than 144 ms are probably erroneous.
+    Any events shorter than 71 ms are impossible.
     """
     tofmin = 0.071
     tofmax = 0.145
@@ -103,7 +111,7 @@ def make_histogram(data_list: List, time_bin_edges: np.ndarray) -> List[np.ndarr
 
     for data in data_list:
         pixids = data["f0"].astype(int)
-        times = data["f1"] / 1e9        # data stored in ns
+        times = data["f1"]
 
         # Assign each event to a time bin
         time_bin_indices = np.digitize(times, time_bin_edges) - 1
