@@ -1,4 +1,3 @@
-
 import scipp
 import h5py
 import json
@@ -182,12 +181,7 @@ def make_animation(
             origin="lower",
             # norm=LogNorm(vmin=global_vmin, vmax=global_vmax),
         )
-        if i == 1:
-            ax.set_title(
-                f"Panel {i} - Frame: 0 / {data.shape[2] - 1}, tof {tofs[i] * 1e6:.1f} ms"
-            )
-        else:
-            ax.set_title(f"Panel {i} - Frame: 0 / {data.shape[2] - 1}")
+        ax.set_title(f"Panel {i} - Frame: 0 / {data.shape[2] - 1}")
         ax.set_xlabel("X pixel")
 
         # Only show Y label on leftmost panel
@@ -208,7 +202,10 @@ def make_animation(
         """Animation function that updates all three panels for each frame"""
         for i, (im, data) in enumerate(zip(ims, processed_data)):
             im.set_array(data[:, :, frame])
-            axes[i].set_title(f"Panel {i} - Frame: {frame + 1} / {data.shape[2]}")
+            if i == 1:
+                axes[i].set_title(f"Panel {i} - Frame: {frame} / {data.shape[2] - 1}, tof {tofs[frame] * 1e3:.1f} ms")
+            else:
+                axes[i].set_title(f"Panel {i} - Frame: {frame} / {data.shape[2] - 1}")
         return ims
 
     nframes = datasets[0].shape[2]
