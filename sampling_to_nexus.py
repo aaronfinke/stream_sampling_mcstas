@@ -197,7 +197,7 @@ def _sigma_limits(
         vmax = vmin * 10.0
     return vmin, vmax
 
-def sum_plot(histo):
+def sum_plot(histo,folder: Path = Path.cwd(),):
     processed = [dset.sum(axis=2) for dset in histo]
 
     combined = np.concatenate([d[d > 0].ravel() for d in processed if d.size > 0])
@@ -222,7 +222,7 @@ def sum_plot(histo):
     cbar_ax = fig.add_axes([0.92, 0.15, 0.02, 0.7])
     cbar = fig.colorbar(ims[0], cax=cbar_ax)
     cbar.set_label("Intensity")
-    fig.savefig("allbins.png")
+    fig.savefig(str(folder / "allbins.png"))
 
 def make_animation(
     datasets: List[np.ndarray],
@@ -364,7 +364,7 @@ def main():
         print("Generating histogram...")
         histo = make_histogram_from_hdf5(sampled, tof_bins)
         del sampled
-        sum_plot(histo)
+        sum_plot(histo, Path(args.input_file).parent)
 
         print("Generating animation...")
         make_animation(histo, tof_bins, Path(args.input_file).parent)
@@ -381,7 +381,7 @@ def main():
         print("Generating histogram...")
         histo = make_histogram(sampled, tof_bins)
         print("Saving sum plot...")
-        sum_plot(histo)
+        sum_plot(histo, Path(args.output_file).parent)
         print("Generating animation...")
         make_animation(histo, tof_bins, Path(args.output_file).parent)
 
