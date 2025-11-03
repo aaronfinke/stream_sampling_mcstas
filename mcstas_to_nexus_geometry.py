@@ -108,28 +108,26 @@ def _overwrite_pixel_offsets(nexus_det: h5py.Group, det: DetectorDesc):
 
 
 def _overwrite_transformations(
-    nexus_det: h5py.Group, det: DetectorDesc, sample_desc: SampleDesc
+    nexus_det: h5py.Group,
+    det_desc: DetectorDesc,
+    sample_desc: SampleDesc,
+    handedness: str = "right",
 ):
-    transformations = nexus_det["transformations"]
+    transformations: h5py.Group = nexus_det["transformations"]
+    rotation_vector = det_desc.rotation_vector
     orientations = transformations["orientation"]
     orientations.attrs["depends_on"] = f"{nexus_det.name}/transformations/stageZ"
-    orientations.attrs["vector"] = list(det.rotation_vector.value)
-    orientations[...] = det.rotation_angle.to(unit=orientations.attrs["units"]).value
+    orientations.attrs["vector"] = list(rotation_vector.value)
+    rot_angle = (
+        -det_desc.rotation_angle if handedness == "right" else det_desc.rotation_angle
+    )
+    orientations[...] = rot_angle.to(unit=orientations.attrs["units"]).value
 
     stageZ = transformations["stageZ"]
     original_attrs = stageZ.attrs
 
-    det_position = sample_desc.position_from_sample(det.position)
-    width = det.step_x * det.num_x
-    height = det.step_y * det.num_y
-    widths = {"x": width, "y": height}
-
-    center_fast = (det.fast_axis * widths[det.fast_axis_name]) / 2
-    center_slow = (det.slow_axis * widths[det.slow_axis_name]) / 2
-    center_point = center_fast + center_slow
-    translation_offset = (det_position + center_point).to(
-        unit=original_attrs["offset_units"]
-    )
+    det_position = sample_desc.position_from_sample(det_desc.position)
+    translation_offset = (det_position).to(unit=original_attrs["offset_units"])
     original_attrs["offset"] = list(translation_offset.value)
     _overwrite_or_create_dataset(
         var=sc.scalar(0.0, unit="mm"),
@@ -138,7 +136,7 @@ def _overwrite_transformations(
         attrs=original_attrs,
     )
     for axis_i in range(1, 7):
-        if (axis_name := f"axis{axis_i}") in transformations:
+        if (axis_name := f"axis{axis_i}") in transformations.keys():
             del transformations[axis_name]
 
 
@@ -179,30 +177,31 @@ def insert_geometry_into_nexus(
         logger=logger,
     )
 
+    geometry.simulation_settings.handedness
+
     with h5py.File(output_file.as_posix(), "r+") as nexus_file:
-        for det_i, (mcstas_det_name, nexus_det_name) in enumerate(
-            mcstas_to_nexus_names.items()
-        ):
+        for mcstas_det_name, nexus_det_name in mcstas_to_nexus_names.items():
             logger.debug(
                 "Inserting detector: %s into %s", mcstas_det_name, nexus_det_name
             )
-            det = mcstas_det_map[mcstas_det_name]
+            det_desc = mcstas_det_map[mcstas_det_name]
 
             detector_gr_path = instrument_path / nexus_det_name
             nexus_det = nexus_file[detector_gr_path.as_posix()]
 
             logger.debug("Overwriting detector_number dataset")
-            _overwrite_detector_numbers(
-                nexus_det,
-                det,
-                id_start=det_i * (det.num_x * det.num_y),  # Hardcoded for now
-            )
+            _overwrite_detector_numbers(nexus_det, det_desc)
 
             logger.debug("Overwriting pixel offsets")
-            _overwrite_pixel_offsets(nexus_det, det)
+            _overwrite_pixel_offsets(nexus_det, det_desc)
 
             logger.debug("Overwriting transformation")
-            _overwrite_transformations(nexus_det, det, geometry.sample)
+            _overwrite_transformations(
+                nexus_det=nexus_det,
+                det_desc=det_desc,
+                sample_desc=geometry.sample,
+                handedness=geometry.simulation_settings.handedness,
+            )
 
 
 def parse_args():

@@ -531,9 +531,14 @@ class McStasInstrument:
 
 def read_mcstas_geometry_xml(
     file_path: str | pathlib.Path,
-    xml_path: str = "entry1/instrument/instrument_xml/data",
+    xml_path: str = "entry/instrument/instrument_xml/data",
 ) -> McStasInstrument:
     """Retrieve geometry parameters from mcstas file"""
-    with h5py.File(file_path) as file:
-        tree = fromstring(file[xml_path][...][0])
-        return McStasInstrument.from_xml(tree)
+    if pathlib.Path(file_path).suffix == ".xml":
+        with open(file_path, "r") as file:
+            tree = fromstring(file.read())
+    else:
+        with h5py.File(file_path) as file:
+            tree = fromstring(file[xml_path][...][0])
+
+    return McStasInstrument.from_xml(tree)
