@@ -1,6 +1,5 @@
-# SPDX-License-Identifier: BSD-3-Clause
-# Copyright (c) 2023 Scipp contributors (https://github.com/scipp)
 # McStas instrument geometry xml description related functions.
+# Copied from ESSNMX
 from collections.abc import Iterable
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -180,6 +179,20 @@ def _position_from_location(location: _XML, unit: str = "m") -> sc.Variable:
     return sc.vector([x, y, z], unit=unit)
 
 
+def _rotation_angle(location: _XML, angle_unit: str = "degree") -> sc.Variable:
+    """Retrieve rotation angle from location."""
+
+    attribs = find_attributes(location, "axis-x", "axis-y", "axis-z", "rot")
+    return sc.scalar(-attribs["rot"], unit=angle_unit)
+
+
+def _rotation_vector(location: _XML) -> sc.Variable:
+    """Retrieve rotation vector from location."""
+
+    attribs = find_attributes(location, "axis-x", "axis-y", "axis-z", "rot")
+    return sc.vector(value=[attribs[f"axis-{axis}"] for axis in "xyz"])
+
+
 def _rotation_matrix_from_location(
     location: _XML, angle_unit: str = "degree"
 ) -> sc.Variable:
@@ -215,6 +228,8 @@ class DetectorDesc:
     position: sc.Variable  # <location> 'x', 'y', 'z'
     # Calculated fields
     rotation_matrix: sc.Variable
+    rotation_angle: sc.Variable
+    rotation_vector: sc.Variable
     slow_axis_name: str
     fast_axis: sc.Variable
     slow_axis: sc.Variable
@@ -254,6 +269,8 @@ class DetectorDesc:
             start_y=float(type_desc.attrib["ystart"]),
             position=_position_from_location(location, simulation_settings.length_unit),
             rotation_matrix=rotation_matrix,
+            rotation_vector=_rotation_vector(location),
+            rotation_angle=_rotation_angle(location, simulation_settings.angle_unit),
             fast_axis=rotation_matrix * _AXISNAME_TO_UNIT_VECTOR[fast_axis_name],
             slow_axis=rotation_matrix * _AXISNAME_TO_UNIT_VECTOR[slow_axis_name],
         )
