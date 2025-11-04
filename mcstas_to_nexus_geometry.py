@@ -138,7 +138,6 @@ def _overwrite_transformations(
         -det_desc.rotation_angle if handedness == "right" else det_desc.rotation_angle
     )
     orientations[...] = rot_angle.to(unit=orientations.attrs["units"]).value
-    # orientations[...] = 0.
 
     stageZ = transformations["stageZ"]
     original_attrs = stageZ.attrs
