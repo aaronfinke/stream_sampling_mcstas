@@ -222,8 +222,8 @@ class DetectorDesc:
     num_y: int  # 'ypixels'
     step_x: sc.Variable  # 'xstep'
     step_y: sc.Variable  # 'ystep'
-    start_x: float  # 'xstart'
-    start_y: float  # 'ystart'
+    start_x: sc.Variable  # 'xstart'
+    start_y: sc.Variable  # 'ystart'
     # From <location> under <component type="MonNDtype-n" ...>
     position: sc.Variable  # <location> 'x', 'y', 'z'
     # Calculated fields
@@ -255,18 +255,26 @@ class DetectorDesc:
 
         # Type casting from str to float and then int to allow *e* notation
         # For example, '1e4' -> 10000.0 -> 10_000
+
+        def lengthify(value: str | float) -> sc.Variable:
+            return sc.scalar(float(value), unit=length_unit)
+
+        def integerize(value: str | float) -> int:
+            # String may need to be float first
+            return int(float(value))
+
         return cls(
             component_type=type_desc.attrib["name"],
             name=component.attrib["name"],
-            id_start=int(float(component.attrib["idstart"])),
+            id_start=integerize(component.attrib["idstart"]),
             fast_axis_name=fast_axis_name,
             slow_axis_name=slow_axis_name,
-            num_x=int(float(type_desc.attrib["xpixels"])),
-            num_y=int(float(type_desc.attrib["ypixels"])),
-            step_x=sc.scalar(float(type_desc.attrib["xstep"]), unit=length_unit),
-            step_y=sc.scalar(float(type_desc.attrib["ystep"]), unit=length_unit),
-            start_x=float(type_desc.attrib["xstart"]),
-            start_y=float(type_desc.attrib["ystart"]),
+            num_x=integerize(type_desc.attrib["xpixels"]),
+            num_y=integerize(type_desc.attrib["ypixels"]),
+            step_x=lengthify(type_desc.attrib["xstep"]),
+            step_y=lengthify(type_desc.attrib["ystep"]),
+            start_x=lengthify(type_desc.attrib["xstart"]),
+            start_y=lengthify(type_desc.attrib["ystart"]),
             position=_position_from_location(location, simulation_settings.length_unit),
             rotation_matrix=rotation_matrix,
             rotation_vector=_rotation_vector(location),
@@ -431,7 +439,8 @@ def _pixel_positions(
         + (pixel_n_fast * fast_axis_steps)
         + detector.rotation_matrix
         * sc.vector(
-            [detector.start_x, detector.start_y, 0.0], unit=position_offset.unit
+            [detector.start_x.value, detector.start_y.value, 0.0],
+            unit=position_offset.unit,
         )  # Detector pixel offset should also be rotated first.
     ) + position_offset
 
@@ -514,12 +523,12 @@ class McStasInstrument:
         """
         if len(det_names) == 1:
             return self._detector_metadata(det_names[0])
-        detector_metadatas = {
+        detector_metadatas: dict[str, dict[str, sc.Variable]] = {
             det_name: self._detector_metadata(det_name) for det_name in det_names
         }
         # Concat all metadata into panel dimension
         metadata_keys: set[str] = set().union(
-            set(detector_metadatas[det_name].keys()) for det_name in det_names
+            *(set(detector_metadatas[det_name].keys()) for det_name in det_names)
         )
         return {
             key: sc.concat(

@@ -48,9 +48,14 @@ def _overwrite_detector_numbers(
         dtype=sc.DType.int32,
         unit=None,
     )
+    slow_axis_num = det.num_y if det.slow_axis_name == "y" else det.num_x
+    fast_axis_num = det.num_x if det.slow_axis_name == "y" else det.num_y
     detector_number = detector_number.fold(
         dim="detector_number",
-        sizes={"y_pixel_offset": det.num_y, "x_pixel_offset": det.num_x},
+        sizes={
+            f"{det.slow_axis_name}_pixel_offset": slow_axis_num,
+            f"{det.fast_axis_name}_pixel_offset": fast_axis_num,
+        },
     )
     _overwrite_or_create_dataset(
         var=detector_number, nexus_det=nexus_det, name="detector_number"
@@ -78,19 +83,19 @@ def _overwrite_pixel_offsets(nexus_det: h5py.Group, det: DetectorDesc):
     x_length = det.step_x * det.num_x
     y_length = det.step_y * det.num_y
     # X pixel offsets
-    x_offset = sc.linspace(
+    x_offset = sc.arange(
         dim="x_pixel_offset",
-        start=-x_length / 2,
-        stop=x_length / 2,
-        num=det.num_x,
+        start=det.start_x,
+        stop=det.start_x + x_length,
+        step=det.step_x,
         unit=det.step_x.unit,
     )
     # Y pixel offsets
-    y_offset = sc.linspace(
+    y_offset = sc.arange(
         dim="y_pixel_offset",
-        start=-y_length / 2,
-        stop=y_length / 2,
-        num=det.num_y,
+        start=det.start_y,
+        stop=det.start_y + y_length,
+        step=det.step_y,
         unit=det.step_y.unit,
     )
 
@@ -165,12 +170,17 @@ def _map_mcstas_to_nexus_detector_name(
     detector_names = sorted(nexus_detector_names)
     mcstas_detector_names = sorted(mcstas_detector_names)
     logger.debug("Found detectors: %s", detector_names)
-    mcstas_to_nexus_detector_name_map = dict(zip(mcstas_detector_names, detector_names))
+    mcstas_to_nexus_detector_name_map = dict(
+        zip(mcstas_detector_names, detector_names, strict=False)
+        # We cut off extra detectors in the nexus file and only use
+        # as many as in the mcstas geometry.
+        # It is because nexus file may contain extra placeholder detectors.
+    )
     logger.debug(
         "Mapping detectors from XML geometry to NeXus file like this: %s,",
         mcstas_to_nexus_detector_name_map,
     )
-    return dict(zip(mcstas_detector_names, nexus_detector_names))
+    return mcstas_to_nexus_detector_name_map
 
 
 def insert_geometry_into_nexus(
@@ -222,10 +232,18 @@ def insert_geometry_into_nexus(
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Sample HDF5 data and create NeXus file"
+        description="Parse mcstas xml geometry "
+        "and insert the information as nexus standard geometry"
+        "(pixel offsets, detector_numbers and NXtransformation) into a NeXus file.\n"
+        "Note that this will open the NeXus file in editing mode and "
+        "may overwrite existing geometry information in the file.",
     )
-    parser.add_argument("input_file", type=str, help="Input HDF5 file path")
-    parser.add_argument("output_file", type=str, help="Output NeXus file path")
+    parser.add_argument(
+        "input_file", type=str, help="Input HDF5 or xml file path with geometry"
+    )
+    parser.add_argument(
+        "output_file", type=str, help="Output NeXus file path to insert geometry into"
+    )
     parser.add_argument(
         "-v",
         "--verbose",
