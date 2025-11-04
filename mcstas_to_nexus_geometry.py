@@ -165,12 +165,17 @@ def _map_mcstas_to_nexus_detector_name(
     detector_names = sorted(nexus_detector_names)
     mcstas_detector_names = sorted(mcstas_detector_names)
     logger.debug("Found detectors: %s", detector_names)
-    mcstas_to_nexus_detector_name_map = dict(zip(mcstas_detector_names, detector_names))
+    mcstas_to_nexus_detector_name_map = dict(
+        zip(mcstas_detector_names, detector_names, strict=False)
+        # We cut off extra detectors in the nexus file and only use
+        # as many as in the mcstas geometry.
+        # It is because nexus file may contain extra placeholder detectors.
+    )
     logger.debug(
         "Mapping detectors from XML geometry to NeXus file like this: %s,",
         mcstas_to_nexus_detector_name_map,
     )
-    return dict(zip(mcstas_detector_names, nexus_detector_names))
+    return mcstas_to_nexus_detector_name_map
 
 
 def insert_geometry_into_nexus(
