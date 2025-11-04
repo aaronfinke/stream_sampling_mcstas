@@ -1,11 +1,17 @@
 import argparse
+import h5py
 import warnings
 import logging
 import scipp as sc
 
 import scippnexus as snx
 from pathlib import Path
-from mcstas_geometry_xml import read_mcstas_geometry_xml, McStasInstrument, DetectorDesc
+from mcstas_geometry_xml import (
+    read_mcstas_geometry_xml,
+    McStasInstrument,
+    DetectorDesc,
+    SampleDesc,
+)
 
 
 def _get_logger(args: argparse.Namespace) -> logging.Logger:
@@ -31,11 +37,14 @@ def load_xml_geometry(file_path: Path, logger: logging.Logger) -> McStasInstrume
     return geometry
 
 
-def _insert_detector_numbers(nexus_det: snx.NXdetector, det: DetectorDesc):
+def _overwrite_detector_numbers(
+    nexus_det: h5py.Group, det: DetectorDesc, id_start: int | None = None
+):
+    id_start = id_start if id_start is not None else det.id_start
     detector_number = sc.arange(
         dim="detector_number",
-        start=det.id_start,
-        stop=det.id_start + det.num_x * det.num_y,
+        start=id_start,
+        stop=id_start + det.num_x * det.num_y,
         dtype=sc.DType.int32,
         unit=None,
     )
@@ -43,44 +52,172 @@ def _insert_detector_numbers(nexus_det: snx.NXdetector, det: DetectorDesc):
         dim="detector_number",
         sizes={"y_pixel_offset": det.num_y, "x_pixel_offset": det.num_x},
     )
-    nexus_det.create_field(key="detector_number", value=detector_number)
-
-
-def _insert_pixel_offset(nexus_det: snx.NXdetector, det: DetectorDesc):
-    x_pixel_offset = sc.linspace(
-        dim="x_pixel_offset", start=-255.9, stop=255.9, num=det.num_x, unit="mm"
+    _overwrite_or_create_dataset(
+        var=detector_number, nexus_det=nexus_det, name="detector_number"
     )
-    x_offset_dset = nexus_det.create_field(key="x_pixel_offset", value=x_pixel_offset)
-    x_offset_dset.attrs["axis"] = 1  # X axis
 
-    y_pixel_offset = sc.linspace(
-        dim="y_pixel_offset", start=-255.9, stop=255.9, num=det.num_y, unit="mm"
+
+def _overwrite_or_create_dataset(
+    var: sc.Variable, nexus_det: h5py.Group, name: str, *, attrs: dict | None = None
+):
+    if name in nexus_det:
+        del nexus_det[name]  # Remove existing dataset if any
+
+    values = var.value if var.dims == () else var.values
+    dset = nexus_det.create_dataset(name=name, data=values)
+
+    attrs = {**attrs} if attrs is not None else {}
+    if var.unit is not None:
+        attrs["units"] = str(var.unit)
+
+    dset.attrs.update(attrs)
+
+
+def _overwrite_pixel_offsets(nexus_det: h5py.Group, det: DetectorDesc):
+    # Always assuming centered detector
+    x_length = det.step_x * det.num_x
+    y_length = det.step_y * det.num_y
+    # X pixel offsets
+    x_offset = sc.linspace(
+        dim="x_pixel_offset",
+        start=-x_length / 2,
+        stop=x_length / 2,
+        num=det.num_x,
+        unit=det.step_x.unit,
     )
-    y_offset_dset = nexus_det.create_field(key="y_pixel_offset", value=y_pixel_offset)
-    y_offset_dset.attrs["axis"] = 2  # Y axis
+    # Y pixel offsets
+    y_offset = sc.linspace(
+        dim="y_pixel_offset",
+        start=-y_length / 2,
+        stop=y_length / 2,
+        num=det.num_y,
+        unit=det.step_y.unit,
+    )
+
+    offset_names = ["x_pixel_offset", "y_pixel_offset"]
+    for name in offset_names:
+        if name in nexus_det:
+            del nexus_det[name]  # Remove existing dataset if any
+
+    # Slow axis means the axis that detector numbers change more slowly
+    # i.e. the outer loop in nested loops over pixels
+    # For example, if slow_axis is 'y', then:
+    # for y in range(num_y):
+    #     for x in range(num_x):
+    #         detector_number += 1
+    # Therefore slow axis should be the lower number axis in NeXus convention
+    # as they are ordered from slowest to fastest changing axis (outer to inner loop)
+    x_axis_order = 2 if det.slow_axis_name == "y" else 1
+    y_axis_order = 1 if det.slow_axis_name == "y" else 2
+    _overwrite_or_create_dataset(
+        var=x_offset,
+        nexus_det=nexus_det,
+        name="x_pixel_offset",
+        attrs={"axis": x_axis_order},
+    )
+    _overwrite_or_create_dataset(
+        var=y_offset,
+        nexus_det=nexus_det,
+        name="y_pixel_offset",
+        attrs={"axis": y_axis_order},
+    )
+
+
+def _overwrite_transformations(
+    nexus_det: h5py.Group,
+    det_desc: DetectorDesc,
+    sample_desc: SampleDesc,
+    handedness: str = "right",
+):
+    transformations: h5py.Group = nexus_det["transformations"]
+    rotation_vector = det_desc.rotation_vector
+    orientations = transformations["orientation"]
+    orientations.attrs["depends_on"] = f"{nexus_det.name}/transformations/stageZ"
+    orientations.attrs["vector"] = list(rotation_vector.value)
+    rot_angle = (
+        -det_desc.rotation_angle if handedness == "right" else det_desc.rotation_angle
+    )
+    orientations[...] = rot_angle.to(unit=orientations.attrs["units"]).value
+
+    stageZ = transformations["stageZ"]
+    original_attrs = stageZ.attrs
+
+    det_position = sample_desc.position_from_sample(det_desc.position)
+    translation_offset = (det_position).to(unit=original_attrs["offset_units"])
+    original_attrs["offset"] = list(translation_offset.value)
+    _overwrite_or_create_dataset(
+        var=sc.scalar(0.0, unit="mm"),
+        nexus_det=transformations,
+        name="stageZ",
+        attrs=original_attrs,
+    )
+    for axis_i in range(1, 7):
+        if (axis_name := f"axis{axis_i}") in transformations.keys():
+            del transformations[axis_name]
+
+
+def _map_mcstas_to_nexus_detector_name(
+    nexus_detector_names: list[str],
+    mcstas_detector_names: list[str],
+    *,
+    logger: logging.Logger,
+) -> dict[str, str]:
+    detector_names = sorted(nexus_detector_names)
+    mcstas_detector_names = sorted(mcstas_detector_names)
+    logger.debug("Found detectors: %s", detector_names)
+    mcstas_to_nexus_detector_name_map = dict(zip(mcstas_detector_names, detector_names))
+    logger.debug(
+        "Mapping detectors from XML geometry to NeXus file like this: %s,",
+        mcstas_to_nexus_detector_name_map,
+    )
+    return dict(zip(mcstas_detector_names, nexus_detector_names))
 
 
 def insert_geometry_into_nexus(
     geometry: McStasInstrument, output_file: Path, logger: logging.Logger
 ):
     logger.info("Inserting geometry into NeXus file: %s", output_file.as_posix())
-    with snx.File(output_file.as_posix(), "r+") as nexus_file:
-        nexus_detectors = nexus_file["entry/instrument"][snx.NXdetector]
-        # Sort them by name
-        nexus_detectors = sorted(nexus_detectors.items(), key=lambda item: item[0])
-        nexus_detectors = {name: det for name, det in nexus_detectors}
-        for det, nexus_det_name in zip(geometry.detectors, nexus_detectors.keys()):
-            nexus_det = nexus_detectors[nexus_det_name]
-            logger.debug("Inserting detector: %s into %s", det.name, nexus_det_name)
-            # Insert detector number
-            if "detector_number" not in nexus_det:
-                logger.debug("Creating detector_number dataset")
-                _insert_detector_numbers(nexus_det, det)
+    instrument_path = Path("entry/instrument")
 
-            # Insert pixel offsets
-            if "x_pixel_offset" not in nexus_det and "y_pixel_offset" not in nexus_det:
-                logger.debug("Creating x_pixel_offset and y_pixel_offset datasets")
-                _insert_pixel_offset(nexus_det, det)
+    # Reading existing detectors from NeXus file with scippnexus
+    # It is really convenient to use scippnexus to read NeXus structure
+    # but not to write...
+    with snx.File(output_file.as_posix(), "r") as nexus_file:
+        inst_gr: snx.Group = nexus_file[instrument_path.as_posix()]
+        detectors = inst_gr[snx.NXdetector].keys()
+
+    mcstas_det_map = {det.name: det for det in geometry.detectors}
+    mcstas_to_nexus_names = _map_mcstas_to_nexus_detector_name(
+        nexus_detector_names=list(detectors),
+        mcstas_detector_names=list(mcstas_det_map.keys()),
+        logger=logger,
+    )
+
+    geometry.simulation_settings.handedness
+
+    with h5py.File(output_file.as_posix(), "r+") as nexus_file:
+        for mcstas_det_name, nexus_det_name in mcstas_to_nexus_names.items():
+            logger.debug(
+                "Inserting detector: %s into %s", mcstas_det_name, nexus_det_name
+            )
+            det_desc = mcstas_det_map[mcstas_det_name]
+
+            detector_gr_path = instrument_path / nexus_det_name
+            nexus_det = nexus_file[detector_gr_path.as_posix()]
+
+            logger.debug("Overwriting detector_number dataset")
+            _overwrite_detector_numbers(nexus_det, det_desc)
+
+            logger.debug("Overwriting pixel offsets")
+            _overwrite_pixel_offsets(nexus_det, det_desc)
+
+            logger.debug("Overwriting transformation")
+            _overwrite_transformations(
+                nexus_det=nexus_det,
+                det_desc=det_desc,
+                sample_desc=geometry.sample,
+                handedness=geometry.simulation_settings.handedness,
+            )
 
 
 def parse_args():
