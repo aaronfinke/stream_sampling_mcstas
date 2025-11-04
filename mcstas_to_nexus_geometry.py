@@ -48,9 +48,14 @@ def _overwrite_detector_numbers(
         dtype=sc.DType.int32,
         unit=None,
     )
+    slow_axis_num = det.num_y if det.slow_axis_name == "y" else det.num_x
+    fast_axis_num = det.num_x if det.slow_axis_name == "y" else det.num_y
     detector_number = detector_number.fold(
         dim="detector_number",
-        sizes={"y_pixel_offset": det.num_y, "x_pixel_offset": det.num_x},
+        sizes={
+            f"{det.slow_axis_name}_pixel_offset": slow_axis_num,
+            f"{det.fast_axis_name}_pixel_offset": fast_axis_num,
+        },
     )
     _overwrite_or_create_dataset(
         var=detector_number, nexus_det=nexus_det, name="detector_number"
