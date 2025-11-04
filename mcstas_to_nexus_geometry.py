@@ -99,11 +99,27 @@ def _overwrite_pixel_offsets(nexus_det: h5py.Group, det: DetectorDesc):
         if name in nexus_det:
             del nexus_det[name]  # Remove existing dataset if any
 
+    # Slow axis means the axis that detector numbers change more slowly
+    # i.e. the outer loop in nested loops over pixels
+    # For example, if slow_axis is 'y', then:
+    # for y in range(num_y):
+    #     for x in range(num_x):
+    #         detector_number += 1
+    # Therefore slow axis should be the lower number axis in NeXus convention
+    # as they are ordered from slowest to fastest changing axis (outer to inner loop)
+    x_axis_order = 2 if det.slow_axis_name == "y" else 1
+    y_axis_order = 1 if det.slow_axis_name == "y" else 2
     _overwrite_or_create_dataset(
-        var=x_offset, nexus_det=nexus_det, name="x_pixel_offset", attrs={"axis": 1}
+        var=x_offset,
+        nexus_det=nexus_det,
+        name="x_pixel_offset",
+        attrs={"axis": x_axis_order},
     )
     _overwrite_or_create_dataset(
-        var=y_offset, nexus_det=nexus_det, name="y_pixel_offset", attrs={"axis": 2}
+        var=y_offset,
+        nexus_det=nexus_det,
+        name="y_pixel_offset",
+        attrs={"axis": y_axis_order},
     )
 
 
@@ -122,6 +138,7 @@ def _overwrite_transformations(
         -det_desc.rotation_angle if handedness == "right" else det_desc.rotation_angle
     )
     orientations[...] = rot_angle.to(unit=orientations.attrs["units"]).value
+    # orientations[...] = 0.
 
     stageZ = transformations["stageZ"]
     original_attrs = stageZ.attrs
