@@ -222,10 +222,18 @@ def insert_geometry_into_nexus(
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Sample HDF5 data and create NeXus file"
+        description="Parse mcstas xml geometry "
+        "and insert the information as nexus standard geometry"
+        "(pixel offsets, detector_numbers and NXtransformation) into a NeXus file.\n"
+        "Note that this will open the NeXus file in editing mode and "
+        "may overwrite existing geometry information in the file.",
     )
-    parser.add_argument("input_file", type=str, help="Input HDF5 file path")
-    parser.add_argument("output_file", type=str, help="Output NeXus file path")
+    parser.add_argument(
+        "input_file", type=str, help="Input HDF5 or xml file path with geometry"
+    )
+    parser.add_argument(
+        "output_file", type=str, help="Output NeXus file path to insert geometry into"
+    )
     parser.add_argument(
         "-v",
         "--verbose",
