@@ -78,19 +78,19 @@ def _overwrite_pixel_offsets(nexus_det: h5py.Group, det: DetectorDesc):
     x_length = det.step_x * det.num_x
     y_length = det.step_y * det.num_y
     # X pixel offsets
-    x_offset = sc.linspace(
+    x_offset = sc.arange(
         dim="x_pixel_offset",
-        start=-x_length / 2,
-        stop=x_length / 2,
-        num=det.num_x,
+        start=det.start_x,
+        stop=det.start_x + x_length,
+        step=det.step_x,
         unit=det.step_x.unit,
     )
     # Y pixel offsets
-    y_offset = sc.linspace(
+    y_offset = sc.arange(
         dim="y_pixel_offset",
-        start=-y_length / 2,
-        stop=y_length / 2,
-        num=det.num_y,
+        start=det.start_y,
+        stop=det.start_y + y_length,
+        step=det.step_y,
         unit=det.step_y.unit,
     )
 
