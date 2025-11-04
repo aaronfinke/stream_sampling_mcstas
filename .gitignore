@@ -1,6 +1,15 @@
 *.h5
+*.nxs
+*.hdf
 *.gif
 *.ipynb
 *.npy
 *.json
 *.sif
+*.xml
+__pycache__/
+.ruff_cache/
+.vscode/
+.pixi/
+pixi.*
+.DS_Store
