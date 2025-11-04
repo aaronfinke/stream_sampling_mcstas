@@ -13,3 +13,4 @@ __pycache__/
 .pixi/
 pixi.*
 .DS_Store
+.gitattributes
