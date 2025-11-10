@@ -10,6 +10,7 @@ from mcstas_geometry_xml import (
     read_mcstas_geometry_xml,
     McStasInstrument,
     DetectorDesc,
+    SourceDesc,
     SampleDesc,
 )
 
@@ -128,7 +129,7 @@ def _overwrite_pixel_offsets(nexus_det: h5py.Group, det: DetectorDesc):
     )
 
 
-def _overwrite_transformations(
+def _overwrite_detector_transformations(
     nexus_det: h5py.Group,
     det_desc: DetectorDesc,
     sample_desc: SampleDesc,
@@ -159,6 +160,53 @@ def _overwrite_transformations(
     for axis_i in range(1, 7):
         if (axis_name := f"axis{axis_i}") in transformations.keys():
             del transformations[axis_name]
+
+
+def _overwrite_sample_transformations(nexus_sample: h5py.Group):
+    depends_on = (
+        nexus_sample["depends_on"][()]
+        .decode("utf-8")
+        .removeprefix("/entry/sample/transformations/")
+    )
+    transformations: h5py.Group = nexus_sample["transformations"]
+    # All geometry is relative to sample so we just set offsets to zero
+    first_depend_on = transformations[depends_on]
+    original_attrs = first_depend_on.attrs
+    original_attrs["offset"] = [0.0, 0.0, 0.0]
+    original_attrs["depends_on"] = "."
+    _overwrite_or_create_dataset(
+        var=sc.scalar(0.0, unit="degree"),
+        nexus_det=transformations,
+        name=depends_on,
+        attrs=original_attrs,
+    )
+
+
+def _overwrite_source_transformations(
+    nexus_source: h5py.Group, source_desc: SourceDesc, sample_desc: SampleDesc
+):
+    transformations: h5py.Group = nexus_source["transformations"]
+    source_position = sample_desc.position_from_sample(source_desc.position)
+    x, y, z = source_position.value
+    # Assuming only translation to x, z axis
+    translation_x = transformations["translation_x"]
+    x_original_attrs = translation_x.attrs
+    translation_x_value = sc.scalar(value=x, unit=source_position.unit)
+    _overwrite_or_create_dataset(
+        var=translation_x_value,
+        nexus_det=transformations,
+        name="translation_x",
+        attrs=x_original_attrs,
+    )
+    translation_z_value = sc.scalar(value=z, unit=source_position.unit)
+    translation_z = transformations["translation"]
+    z_original_attrs = translation_z.attrs
+    _overwrite_or_create_dataset(
+        var=translation_z_value,
+        nexus_det=transformations,
+        name="translation",
+        attrs=z_original_attrs,
+    )
 
 
 def _map_mcstas_to_nexus_detector_name(
@@ -221,12 +269,20 @@ def insert_geometry_into_nexus(
             logger.debug("Overwriting pixel offsets")
             _overwrite_pixel_offsets(nexus_det, det_desc)
 
-            logger.debug("Overwriting transformation")
-            _overwrite_transformations(
+            logger.debug("Overwriting detector transformation")
+            _overwrite_detector_transformations(
                 nexus_det=nexus_det,
                 det_desc=det_desc,
                 sample_desc=geometry.sample,
                 handedness=geometry.simulation_settings.handedness,
+            )
+
+            logger.debug("Overwriting source/sample transformation")
+            _overwrite_sample_transformations(nexus_sample=nexus_file["entry/sample"])
+            _overwrite_source_transformations(
+                nexus_source=nexus_file["entry/instrument/source"],
+                source_desc=geometry.source,
+                sample_desc=geometry.sample,
             )
 
 
