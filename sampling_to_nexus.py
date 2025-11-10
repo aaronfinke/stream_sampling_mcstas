@@ -51,7 +51,7 @@ def redistribute_sampling(sampled):
     return [d0, d1, d2]
 
 
-def do_sampling(filename: str, range: int = 3, n: int = 10 ^ 5) -> List[np.ndarray]:
+def do_sampling(filename: str, range: int = 3, n: int = 10 ** 5) -> List[np.ndarray]:
     rangeval = f"0:{range - 1}"
     eval_statement = f'sample_all_frames("{filename}", {rangeval}, {n}, AlgWRSWRSKIP())'
     print(f"Running {eval_statement} ...")
