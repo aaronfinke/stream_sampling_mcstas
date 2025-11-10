@@ -5,8 +5,10 @@ import numpy as np
 import time
 import argparse
 from pathlib import Path
+import sys
 
 import matplotlib.animation as animation
+
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 
@@ -19,7 +21,7 @@ jl.include(str(julia_path / "sampling_toNexus_mask.jl"))
 
 mpl.rcParams["animation.embed_limit"] = 500
 
-NMX_JSON_PATH = "nmx-dynamic.json"
+NMX_JSON_PATH = "/project/project_465002030/nmx-dynamic.json"
 
 
 def write_to_nexus(fp: h5py.File | h5py.Dataset | h5py.Group, entry: Dict):
@@ -41,26 +43,33 @@ def write_to_nexus(fp: h5py.File | h5py.Dataset | h5py.Group, entry: Dict):
                 dset.attrs[attribute["name"]] = attribute["values"]
 
 
-def do_sampling(filename: str, range: int = 3, n: int = 10 ^ 5) -> List[np.ndarray]:
+def redistribute_sampling(sampled):
+    pixids = sampled["f0"]
+    d1 = sampled[pixids < 1280 * 1280]
+    d0 = sampled[(1280 * 1280 <= pixids) & (pixids < 2 * 1280 * 1280)]
+    d2 = sampled[(pixids >= 2 * 1280 * 1280)]
+    return [d0, d1, d2]
+
+
+def do_sampling(filename: str, range: int = 3, n: int = 10 ** 5) -> List[np.ndarray]:
     rangeval = f"0:{range - 1}"
-    eval_statement = f'sample_frames("{filename}", {rangeval}, {n}, AlgWRSWRSKIP())'
+    eval_statement = f'sample_all_frames("{filename}", {rangeval}, {n}, AlgWRSWRSKIP())'
     print(f"Running {eval_statement} ...")
     t1 = time.perf_counter()
     sampled_jl = jl.seval(eval_statement)
     print(f"... done. Took {time.perf_counter() - t1:.2f} s.")
-    sampled = [x.to_numpy() for x in sampled_jl]
-    # np.save("output.py", sampled)
-    return sampled
+    sampled = sampled_jl.to_numpy()
+    return redistribute_sampling(sampled)
 
 
-def load_json_dict():
-    if not Path(NMX_JSON_PATH).exists():
-        raise FileNotFoundError(f"File not found: {NMX_JSON_PATH}")
-    return json.load(open(NMX_JSON_PATH))
+def load_json_dict(json_path):
+    if not Path(json_path).exists():
+        raise FileNotFoundError(f"File not found: {json_path}")
+    return json.load(open(json_path))
 
 
-def create_nexus_file(output_file: str, sampled: List[np.ndarray]):
-    metadata_dict = load_json_dict()
+def create_nexus_file(output_file: str, sampled: List[np.ndarray], json_template: str):
+    metadata_dict = load_json_dict(json_template)
     subtopics = metadata_dict["children"][0]
 
     with h5py.File(output_file, "w") as fp:
@@ -71,7 +80,7 @@ def create_nexus_file(output_file: str, sampled: List[np.ndarray]):
             datagroup.create_dataset("cue_timestamp_0", data=0)
             sampled_index = sampled[index]
             event_ids = sampled_index["f0"].astype(int)
-            toas = sampled_index["f1"] * 1e9
+            toas = sampled_index["f1"].copy() * 1e9
             datagroup.create_dataset("event_id", data=event_ids)
             t_offset = datagroup.create_dataset("event_time_offset", data=toas)
             t_offset.attrs["units"] = "ns"
@@ -90,6 +99,7 @@ def get_tof_bins(results: List[np.ndarray], n=50):
     """
     hardcoding the tof bins as NMX-specific.
     Any events longer than 144 ms are probably erroneous.
+    Any events shorter than 71 ms are impossible.
     """
     tofmin = 0.071
     tofmax = 0.145
@@ -108,7 +118,47 @@ def make_histogram(data_list: List, time_bin_edges: np.ndarray) -> List[np.ndarr
 
     for data in data_list:
         pixids = data["f0"].astype(int)
-        times = data["f1"] / 1e9
+        times = data["f1"]
+
+        # Assign each event to a time bin
+        time_bin_indices = np.digitize(times, time_bin_edges) - 1
+        # Clip to ensure all indices are within valid range
+        time_bin_indices = np.clip(time_bin_indices, 0, n_time_bins - 1)
+
+        np.add.at(pixel_counts_per_bin, (pixids, time_bin_indices), 1)
+    # np.save("ouput.npy", pixel_counts_per_bin)
+    # Reshape to detector coordinates if needed
+    data_panel_0 = pixel_counts_per_bin[: (1280 * 1280), :]
+    data_panel_1 = pixel_counts_per_bin[(1280 * 1280) : (1280 * 1280 * 2), :]
+    data_panel_2 = pixel_counts_per_bin[(1280 * 1280 * 2) :, :]
+
+    data_panel_0 = data_panel_0.reshape((1280, 1280, n_time_bins))
+    data_panel_1 = data_panel_1.reshape((1280, 1280, n_time_bins))
+    data_panel_2 = data_panel_2.reshape((1280, 1280, n_time_bins))
+
+    data_panels = [data_panel_0, data_panel_1, data_panel_2]
+
+    # detector_time_series = pixel_counts_per_bin.reshape(n_time_bins, 1280, 1280)
+    # detector_time_series_corrected = detector_time_series.transpose((1, 2, 0))
+    for i, data in enumerate(data_panels):
+        print(f"Shape of histogram {i}: {data.shape}")
+    # np.save("data.npy", data_panels)
+    return data_panels
+
+
+def make_histogram_from_hdf5(
+    data_list: List, time_bin_edges: np.ndarray
+) -> List[np.ndarray]:
+    # Define time binning parameters
+    n_time_bins = len(time_bin_edges)
+
+    # Now create pixel counts per time bin
+    n_pixels = 1280 * 1280 * 3
+    pixel_counts_per_bin = np.zeros((n_pixels, n_time_bins))
+
+    for data in data_list:
+        pixids = data[:, 0].astype(int)
+        times = data[:, 1] / 1e9  # data stored in ns
 
         # Assign each event to a time bin
         time_bin_indices = np.digitize(times, time_bin_edges) - 1
@@ -151,6 +201,37 @@ def _sigma_limits(
     return vmin, vmax
 
 
+def sum_plot(
+    histo,
+    folder: Path = Path.cwd(),
+):
+    processed = [dset.sum(axis=2) for dset in histo]
+
+    combined = np.concatenate([d[d > 0].ravel() for d in processed if d.size > 0])
+    vmin, vmax = _sigma_limits(combined, low_sigma=0.0, high_sigma=2.0)
+
+    fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+    fig.subplots_adjust(wspace=0.02)
+
+    ims = []
+    for i, (ax, data) in enumerate(zip(axes, processed)):
+        im = ax.imshow(data, cmap="viridis", origin="lower", vmin=vmin, vmax=vmax)
+        ax.set_title(f"Panel {i} - All Frames")
+        if i == 0:
+            ax.set_ylabel("Y pixel")
+        else:
+            ax.set_yticklabels([])
+        ax.set_xlabel("X pixel")
+        ims.append(im)
+
+    # Single shared colorbar (remove per-axis plt.colorbar calls)
+    fig.subplots_adjust(right=0.9)
+    cbar_ax = fig.add_axes([0.92, 0.15, 0.02, 0.7])
+    cbar = fig.colorbar(ims[0], cax=cbar_ax)
+    cbar.set_label("Intensity")
+    fig.savefig(str(folder / "allbins.png"))
+
+
 def make_animation(
     datasets: List[np.ndarray],
     tofs: np.ndarray,
@@ -164,7 +245,8 @@ def make_animation(
     vmin, vmax = _sigma_limits(combined, low_sigma=low_sigma, high_sigma=high_sigma)
 
     # Optionally clip data to these limits (prevents outliers dominating colorbar)
-    processed_data = [np.clip(np.where(d <= 0, vmin, d), vmin, vmax) for d in datasets]
+    # processed_data = [np.clip(np.where(d <= 0, vmin, d), vmin, vmax) for d in datasets]
+    processed_data = datasets
 
     # Create figure with three subplots - closer spacing
     fig, axes = plt.subplots(1, 3, figsize=(18, 6))
@@ -177,6 +259,8 @@ def make_animation(
             data[:, :, 0],
             cmap="viridis",
             origin="lower",
+            vmin=vmin,
+            vmax=vmax,
             # norm=LogNorm(vmin=global_vmin, vmax=global_vmax),
         )
         ax.set_title(f"Panel {i} - Frame: 0 / {data.shape[2] - 1}")
@@ -200,7 +284,12 @@ def make_animation(
         """Animation function that updates all three panels for each frame"""
         for i, (im, data) in enumerate(zip(ims, processed_data)):
             im.set_array(data[:, :, frame])
-            axes[i].set_title(f"Panel {i} - Frame: {frame + 1} / {data.shape[2]}")
+            if i == 1:
+                axes[i].set_title(
+                    f"Panel {i} - Frame: {frame} / {data.shape[2] - 1}, tof {tofs[frame] * 1e3:.1f} ms"
+                )
+            else:
+                axes[i].set_title(f"Panel {i} - Frame: {frame} / {data.shape[2] - 1}")
         return ims
 
     nframes = datasets[0].shape[2]
@@ -215,7 +304,11 @@ def make_animation(
     )
 
     # To save as GIF (uncomment if needed):
-    anim.save(folder / "3panel_animation.gif", writer="pillow", fps=5)
+    anim.save(
+        folder / "3panel_animation.gif",
+        writer="pillow",
+        fps=5,
+    )
 
 
 def parse_args():
@@ -223,9 +316,29 @@ def parse_args():
         description="Sample HDF5 data and create NeXus file"
     )
     parser.add_argument("input_file", type=str, help="Input HDF5 file path")
-    parser.add_argument("output_file", type=str, help="Output NeXus file path")
     parser.add_argument(
-        "--do-histogram", action="store_true", help="Generate histogram data"
+        "--output_file",
+        type=str,
+        help="Output NeXus file path",
+        default="sampling_output.h5",
+        required=False,
+    )
+    parser.add_argument(
+        "-j",
+        "--json-file",
+        type=str,
+        help="Path to json template",
+        default=NMX_JSON_PATH,
+    )
+    parser.add_argument(
+        "--do-histogram",
+        action="store_true",
+        help="Generate histogram data and animation",
+    )
+    parser.add_argument(
+        "--animation-only",
+        action="store_true",
+        help="Generate animation only (after sampling)",
     )
     parser.add_argument(
         "--range", type=int, default=3, help="Number of panels (default: 3)"
@@ -234,23 +347,49 @@ def parse_args():
         "--n-samples",
         type=int,
         default=10**5,
-        help="Number of samples (default: 100000)",
+        help="Number of samples (default: 100_000)",
     )
     return parser.parse_args()
 
 
 def main():
-    if not Path(NMX_JSON_PATH).exists():
-        raise FileNotFoundError(f"path {NMX_JSON_PATH} does not exist.")
     args = parse_args()
+    if args.animation_only:
+        datas = []
+        try:
+            print(f"Loading file {args.input_file}...")
+            with h5py.File(args.input_file) as fp:
+                for i in range(3):
+                    data = fp[f"entry/instrument/detector_panel_{i}/data"]
+                    pixids = data["event_id"][:]
+                    tofs = data["event_time_offset"][:]
+                    datas.append(np.column_stack((pixids, tofs)))
+        except (KeyError, FileNotFoundError) as e:
+            print(f"Error in reading HDF5: {e}")
+            raise
+        sampled = [np.array(x) for x in datas]
+        tof_bins = get_tof_bins(sampled)
+        print("Generating histogram...")
+        histo = make_histogram_from_hdf5(sampled, tof_bins)
+        del sampled
+        sum_plot(histo, Path(args.input_file).parent)
+
+        print("Generating animation...")
+        make_animation(histo, tof_bins, Path(args.input_file).parent)
+        sys.exit(0)
+
+    if not Path(args.json_file).exists():
+        raise FileNotFoundError(f"File {args.json_file} not found.")
     sampled = do_sampling(args.input_file, args.range, args.n_samples)
     if Path(args.output_file).exists():
         print(f"Warning: overwriting {args.output_file}...")
-    create_nexus_file(args.output_file, sampled)
+    create_nexus_file(args.output_file, sampled, args.json_file)
     if args.do_histogram:
-        tof_bins = get_tof_bins(sampled, n=50)
+        tof_bins = get_tof_bins(sampled)
         print("Generating histogram...")
         histo = make_histogram(sampled, tof_bins)
+        print("Saving sum plot...")
+        sum_plot(histo, Path(args.output_file).parent)
         print("Generating animation...")
         make_animation(histo, tof_bins, Path(args.output_file).parent)
 
