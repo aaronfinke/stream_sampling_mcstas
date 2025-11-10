@@ -1,4 +1,6 @@
 *.h5
+*.nxs
+*.hdf
 *.gif
 *.ipynb
 *.npy
@@ -10,3 +12,11 @@ __pycache__/
 *.py[codz]
 *$py.class
 .DS_Store
+*.xml
+__pycache__/
+.ruff_cache/
+.vscode/
+.pixi/
+pixi.*
+.DS_Store
+.gitattributes
