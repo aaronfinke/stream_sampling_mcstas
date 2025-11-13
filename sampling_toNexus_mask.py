@@ -14,6 +14,8 @@ import matplotlib.pyplot as plt
 
 from typing import List, Any, Dict
 
+os.environ["PYTHON_JULIACALL_HANDLE_SIGNALS"] = "yes"
+os.environ["JULIA_NUM_THREADS"] = "2" # choose the number of threads
 from juliacall import Main as jl
 
 julia_path = Path(__file__).parent

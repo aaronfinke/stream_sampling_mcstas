@@ -62,11 +62,11 @@ end
 
 function sample_all_frames(filename, indices, n, alg)
     rng = Xoshiro(rand(UInt))
-    rs = ReservoirSampler{NTuple{2, Float64}}(rng, n, alg)
+    rs = [ReservoirSampler{NTuple{2, Float64}}(rng, n, alg) for _ in indices]
     mask_set = createMask()
     chunksize = 5*10^5
     h5open(filename, "r") do file
-        for index in indices
+        Threads.@threads for (i, index) in collect(enumerate(indices))
             println("Sampling index $(index)...")
             dataname = "entry1/data/Detector_$(index)_event_signal_dat_list_p_x_y_n_id_t/events"
             dset = file[dataname]
@@ -74,23 +74,21 @@ function sample_all_frames(filename, indices, n, alg)
             if index == 1
                 for ch in chunks(1:totalsize, n=ceil(Int, totalsize/chunksize))
                     chunk_data = dset[:, ch]
-                    filtered_data = chunk_data[:,.!(in.(chunk_data[5,:], Ref(mask_set)))]
-                    for c in eachcol(filtered_data)
-                        fit!(rs, (c[5], c[6]), c[1])
+                    for c in eachcol(chunk_data)
+                        !(c[5] in mask_set) && fit!(rs[i], (c[5], c[6]), c[1])
                     end
                 end
             else
                 for ch in chunks(1:totalsize, n=ceil(Int, totalsize/chunksize))
                     for c in eachcol(dset[:, ch])
-                        fit!(rs, (c[5], c[6]), c[1])
+                        fit!(rs[i], (c[5], c[6]), c[1])
                     end
                 end  
             end              
         end
     end
-    return value(rs)
+    return value(merge(rs...))
 end
 
 # using BenchmarkTools
 # @btime sample_frames("mccode.h5", 0:2, 10^5, AlgWRSWRSKIP());
-
