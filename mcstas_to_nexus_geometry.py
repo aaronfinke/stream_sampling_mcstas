@@ -193,9 +193,9 @@ def _overwrite_sample_transformations(nexus_sample: h5py.Group):
             stacklevel=1,
         )
 
-    nexus_sample.create_dataset(
-        "depends_on", data=b"/entry/sample/transformations/axis6"
-    )
+        nexus_sample.create_dataset(
+            "depends_on", data=b"/entry/sample/transformations/axis6"
+        )
 
     depends_on = (
         nexus_sample["depends_on"][()]
@@ -239,9 +239,10 @@ def _overwrite_source_transformations(
             stacklevel=1,
         )
 
-    nexus_source.create_dataset(
-        "depends_on", data=b"/entry/instrument/source/transformations/translation"
-    )
+        nexus_source.create_dataset(
+            "depends_on", data=b"/entry/instrument/source/transformations/translation"
+        )
+
     transformations: h5py.Group = nexus_source["transformations"]
     source_position = sample_desc.position_from_sample(source_desc.position)
     x, y, z = source_position.value
