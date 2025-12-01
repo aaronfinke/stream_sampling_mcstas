@@ -185,6 +185,18 @@ def _overwrite_detector_transformations(
 
 
 def _overwrite_sample_transformations(nexus_sample: h5py.Group):
+    if "depends_on" not in nexus_sample:
+        warnings.warn(
+            "Sample group does not have depends_on field. "
+            "Overwriting depends_on to be default value /entry/sample/transformations/axis6",
+            RuntimeWarning,
+            stacklevel=1,
+        )
+
+        nexus_sample.create_dataset(
+            "depends_on", data=b"/entry/sample/transformations/axis6"
+        )
+
     depends_on = (
         nexus_sample["depends_on"][()]
         .decode("utf-8")
@@ -218,6 +230,19 @@ def _insert_crystal_rotation(
 def _overwrite_source_transformations(
     nexus_source: h5py.Group, source_desc: SourceDesc, sample_desc: SampleDesc
 ):
+    if "depends_on" not in nexus_source:
+        warnings.warn(
+            "Sample group does not have depends_on field. "
+            "Overwriting depends_on to be default value "
+            "/entry/instrument/source/transformations/translation",
+            RuntimeWarning,
+            stacklevel=1,
+        )
+
+        nexus_source.create_dataset(
+            "depends_on", data=b"/entry/instrument/source/transformations/translation"
+        )
+
     transformations: h5py.Group = nexus_source["transformations"]
     source_position = sample_desc.position_from_sample(source_desc.position)
     x, y, z = source_position.value
@@ -453,6 +478,19 @@ def main():
         logger,
         crystal_rotation_file_path=args.crystal_rotation_file_path,
     )
+
+    if args.wrap_event_time_offset:
+        warnings.warn(
+            "`--wrap-event-time-offset` is a temporary workaround "
+            "until the sampling implementation is updated.",
+            DeprecationWarning,
+        )
+        pulse_period = sc.scalar(1 / 14, unit="s")  # 14 Hz pulse frequency at ESS
+        wrap_event_time_offsets(
+            output_file_path,
+            pulse_period=pulse_period,
+            logger=logger,
+        )
 
 
 if __name__ == "__main__":
