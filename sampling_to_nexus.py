@@ -34,7 +34,8 @@ def write_to_nexus(fp: h5py.File | h5py.Dataset | h5py.Group, entry: Dict):
                 try:
                     new_group.attrs[attribute["name"]] = attribute["values"]
                 except TypeError:
-                    print(f"attribute {attribute['name']} is invalid, type is {type(attribute['name'])}")
+                    print(f"attribute {attribute} is invalid, type is {type(attribute)}")
+                    pass
         for dset in entry["children"]:
             write_to_nexus(new_group, dset)
 
@@ -46,7 +47,8 @@ def write_to_nexus(fp: h5py.File | h5py.Dataset | h5py.Group, entry: Dict):
                 try:
                     dset.attrs[attribute["name"]] = attribute["values"]
                 except TypeError:
-                    print(f"attribute {attribute['name']} is invalid, type is {type(attribute['name'])}")
+                    print(f"attribute {attribute} is invalid, type is {type(attribute)}")
+                    pass
     
 
 
