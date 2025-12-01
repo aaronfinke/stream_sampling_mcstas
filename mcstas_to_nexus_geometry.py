@@ -454,6 +454,19 @@ def main():
         crystal_rotation_file_path=args.crystal_rotation_file_path,
     )
 
+    if args.wrap_event_time_offset:
+        warnings.warn(
+            "`--wrap-event-time-offset` is a temporary workaround "
+            "until the sampling implementation is updated.",
+            DeprecationWarning,
+        )
+        pulse_period = sc.scalar(1 / 14, unit="s")  # 14 Hz pulse frequency at ESS
+        wrap_event_time_offsets(
+            output_file_path,
+            pulse_period=pulse_period,
+            logger=logger,
+        )
+
 
 if __name__ == "__main__":
     main()
