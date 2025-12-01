@@ -38,6 +38,28 @@ def load_xml_geometry(file_path: Path, logger: logging.Logger) -> McStasInstrume
     return geometry
 
 
+def _load_crystal_rotation(
+    mcstas_file: h5py.File, instrument: McStasInstrument
+) -> sc.Variable:
+    """Retrieve crystal rotation from the file.
+
+    Raises
+    ------
+    KeyError
+        If the crystal rotation is not found in the file.
+
+    """
+    param_keys = tuple(f"entry1/simulation/Param/XtalPhi{key}" for key in "XYZ")
+    if not all(key in mcstas_file for key in param_keys):
+        raise KeyError(
+            f"Crystal rotations [{', '.join(param_keys)}] not found in file."
+        )
+    return sc.vector(
+        value=[float(mcstas_file[param_key][()][0]) for param_key in param_keys],
+        unit=instrument.simulation_settings.angle_unit,
+    )
+
+
 def _overwrite_detector_numbers(
     nexus_det: h5py.Group, det: DetectorDesc, id_start: int | None = None
 ):
@@ -182,6 +204,17 @@ def _overwrite_sample_transformations(nexus_sample: h5py.Group):
     )
 
 
+def _insert_crystal_rotation(
+    nexus_sample: h5py.Group, crystal_rotation: sc.Variable | None
+):
+    if crystal_rotation is None:
+        return
+
+    _overwrite_or_create_dataset(
+        var=crystal_rotation, nexus_det=nexus_sample, name="crystal_rotation"
+    )
+
+
 def _overwrite_source_transformations(
     nexus_source: h5py.Group, source_desc: SourceDesc, sample_desc: SampleDesc
 ):
@@ -232,8 +265,28 @@ def _map_mcstas_to_nexus_detector_name(
 
 
 def insert_geometry_into_nexus(
-    geometry: McStasInstrument, output_file: Path, logger: logging.Logger
+    geometry: McStasInstrument,
+    output_file: Path,
+    logger: logging.Logger,
+    crystal_rotation_file_path: str = "",
 ):
+    # Try loading crystal rotation if file path is provided
+    if crystal_rotation_file_path:
+        logger.info(
+            "Loading crystal rotation from file: %s", crystal_rotation_file_path
+        )
+        with h5py.File(crystal_rotation_file_path, "r") as mcstas_file:
+            crystal_rotation = _load_crystal_rotation(
+                mcstas_file=mcstas_file, instrument=geometry
+            )
+        logger.info("Setting crystal rotation to: %s", crystal_rotation)
+
+    else:
+        logger.info(
+            "No crystal rotation file path provided, skipping crystal rotation."
+        )
+        crystal_rotation = None
+
     logger.info("Inserting geometry into NeXus file: %s", output_file.as_posix())
     instrument_path = Path("entry/instrument")
 
@@ -254,6 +307,16 @@ def insert_geometry_into_nexus(
     geometry.simulation_settings.handedness
 
     with h5py.File(output_file.as_posix(), "r+") as nexus_file:
+        logger.debug("Overwriting source/sample transformation")
+        _overwrite_sample_transformations(nexus_sample=nexus_file["entry/sample"])
+        _overwrite_source_transformations(
+            nexus_source=nexus_file["entry/instrument/source"],
+            source_desc=geometry.source,
+            sample_desc=geometry.sample,
+        )
+        _insert_crystal_rotation(
+            nexus_sample=nexus_file["entry/sample"], crystal_rotation=crystal_rotation
+        )
         for mcstas_det_name, nexus_det_name in mcstas_to_nexus_names.items():
             logger.debug(
                 "Inserting detector: %s into %s", mcstas_det_name, nexus_det_name
@@ -275,14 +338,6 @@ def insert_geometry_into_nexus(
                 det_desc=det_desc,
                 sample_desc=geometry.sample,
                 handedness=geometry.simulation_settings.handedness,
-            )
-
-            logger.debug("Overwriting source/sample transformation")
-            _overwrite_sample_transformations(nexus_sample=nexus_file["entry/sample"])
-            _overwrite_source_transformations(
-                nexus_source=nexus_file["entry/instrument/source"],
-                source_desc=geometry.source,
-                sample_desc=geometry.sample,
             )
 
 
@@ -348,6 +403,13 @@ def parse_args():
         "output_file", type=str, help="Output NeXus file path to insert geometry into"
     )
     parser.add_argument(
+        "--crystal-rotation-file-path",
+        type=str,
+        default="",
+        help="Path to the mcstas file to read crystal rotation from "
+        "(if not provided, crystal rotation will not be inserted)",
+    )
+    parser.add_argument(
         "-v",
         "--verbose",
         action="store_true",
@@ -385,19 +447,12 @@ def main():
             stacklevel=3,
         )
 
-    insert_geometry_into_nexus(simulation_geometry, output_file_path, logger)
-    if args.wrap_event_time_offset:
-        warnings.warn(
-            "The --wrap-event-time-offset option is a temporary workaround "
-            "until the sampling implementation is updated. ",
-            RuntimeWarning,
-            stacklevel=2,
-        )
-        wrap_event_time_offsets(
-            output_file=output_file_path,
-            pulse_period=sc.scalar(1 / 14, unit="s"),  # Assuming 14 Hz pulse frequency
-            logger=logger,
-        )
+    insert_geometry_into_nexus(
+        simulation_geometry,
+        output_file_path,
+        logger,
+        crystal_rotation_file_path=args.crystal_rotation_file_path,
+    )
 
 
 if __name__ == "__main__":
