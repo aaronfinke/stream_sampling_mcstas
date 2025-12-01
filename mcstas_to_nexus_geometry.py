@@ -341,6 +341,53 @@ def insert_geometry_into_nexus(
             )
 
 
+def wrap_event_time_offsets(
+    output_file: Path, pulse_period: sc.Variable, logger: logging.Logger
+):
+    logger.info("Wrapping event time offsets in NeXus file: %s", output_file.as_posix())
+    instrument_path = Path("entry/instrument")
+
+    # Reading existing detectors from NeXus file with scippnexus
+    # It is really convenient to use scippnexus to read NeXus structure
+    # but not to write...
+    with snx.File(output_file.as_posix(), "r") as nexus_file:
+        inst_gr: snx.Group = nexus_file[instrument_path.as_posix()]
+        detectors = inst_gr[snx.NXdetector].keys()
+        event_time_offsets: dict[str, sc.Variable] = {
+            det_name: nexus_file[(instrument_path / det_name / "data").as_posix()][
+                "event_time_offset"
+            ][()]
+            for det_name in detectors
+        }
+        event_time_offsets = {
+            det_name: etf % pulse_period.to(unit=etf.unit)
+            for det_name, etf in event_time_offsets.items()
+        }
+
+    with h5py.File(output_file.as_posix(), "r+") as nexus_file:
+        for nexus_det_name in detectors:
+            logger.debug("Wrapping event time offsets for detector: %s", nexus_det_name)
+            data_gr_path = instrument_path / nexus_det_name / "data"
+            nexus_det = nexus_file[data_gr_path.as_posix()]
+            logger.debug(nexus_det.keys())
+
+            if "event_time_offset" not in nexus_det:
+                raise ValueError(
+                    f"Detector {nexus_det_name} does not have event_time_offset dataset."
+                )
+            event_time_offset = event_time_offsets[nexus_det_name]
+            wrapped_time_offset = event_time_offset
+            del nexus_det["event_time_offset"]  # Remove existing dataset
+            _overwrite_or_create_dataset(
+                var=wrapped_time_offset,
+                nexus_det=nexus_det,
+                name="event_time_offset",
+            )
+            logger.debug(
+                "Overwriting event_time_offset dataset %s", wrapped_time_offset
+            )
+
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Parse mcstas xml geometry "
@@ -367,6 +414,13 @@ def parse_args():
         "--verbose",
         action="store_true",
         help="Enable verbose logging output",
+    )
+    parser.add_argument(
+        "--wrap-event-time-offset",
+        action="store_true",
+        help="Wrap event time offsets to be within a single pulse period. "
+        "**Note**: This option is a temporary workaround "
+        "until the sampling implementation is updated.",
     )
     return parser.parse_args()
 
