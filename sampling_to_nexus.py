@@ -1,4 +1,3 @@
-import scipp
 import h5py
 import json
 import numpy as np
@@ -6,14 +5,14 @@ import time
 import argparse
 from pathlib import Path
 import sys
-
+from typing import List, Dict
+import logging
 import matplotlib.animation as animation
-
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 
-from typing import List, Any, Dict
-
+import mcstas_to_nexus_geometry
+from mcstas_geometry_xml import read_mcstas_geometry_xml
 from juliacall import Main as jl
 
 julia_path = Path(__file__).parent
@@ -21,10 +20,27 @@ jl.include(str(julia_path / "sampling_toNexus.jl"))
 
 mpl.rcParams["animation.embed_limit"] = 500
 
-NMX_JSON_PATH = "/project/project_465002030/nmx-dynamic.json"
+NMX_JSON_PATH = "/project/project_465002030/streaming_mcstas_nexus.json"
+NMX_PERIOD = 1/14       # seconds
+
+def _get_logger(args: argparse.Namespace) -> logging.Logger:
+    # Parse arguments for logging level
+    level = logging.DEBUG if args.verbose else logging.INFO
+    # Initialize logger
+    cur_file_name = Path(__file__).stem
+    logger = logging.getLogger(cur_file_name)
+    # Initialize handler and formatter
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter(
+        "%(asctime)s - %(levelname)s - %(message)s - %(filename)s:%(lineno)d"
+    )
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+    logger.setLevel(level)
+    return logger
 
 
-def write_to_nexus(fp: h5py.File | h5py.Dataset | h5py.Group, entry: Dict):
+def write_template_to_nexus(fp: h5py.File | h5py.Dataset | h5py.Group, entry: Dict):
     if entry.get("type") == "group":
         # create group
         new_group = fp.create_group(entry["name"])
@@ -34,10 +50,10 @@ def write_to_nexus(fp: h5py.File | h5py.Dataset | h5py.Group, entry: Dict):
                 try:
                     new_group.attrs[attribute["name"]] = attribute["values"]
                 except TypeError:
-                    print(f"attribute {attribute} is invalid, type is {type(attribute)}")
+                    print(f"attribute '{attribute}' in entry '{entry}' is invalid, type is {type(attribute)}")
                     pass
         for dset in entry["children"]:
-            write_to_nexus(new_group, dset)
+            write_template_to_nexus(new_group, dset)
 
     elif entry.get("module") == "dataset":
         data = entry["config"].get("values")
@@ -47,7 +63,7 @@ def write_to_nexus(fp: h5py.File | h5py.Dataset | h5py.Group, entry: Dict):
                 try:
                     dset.attrs[attribute["name"]] = attribute["values"]
                 except TypeError:
-                    print(f"attribute {attribute} is invalid, type is {type(attribute)}")
+                    print(f"attribute '{attribute}' in entry '{entry}' is invalid, type is {type(attribute)}")
                     pass
     
 
@@ -78,20 +94,23 @@ def load_json_dict(json_path):
 
 
 def create_nexus_file(output_file: str, sampled: List[np.ndarray], json_template: str):
+    
     metadata_dict = load_json_dict(json_template)
     subtopics = metadata_dict["children"][0]
 
     with h5py.File(output_file, "w") as fp:
-        write_to_nexus(fp, subtopics)
+        write_template_to_nexus(fp, subtopics)
         for index in range(3):
             datagroup = fp[f"entry/instrument/detector_panel_{index}/data"]
             datagroup.create_dataset("cue_index", data=0)
             datagroup.create_dataset("cue_timestamp_0", data=0)
             sampled_index = sampled[index]
             event_ids = sampled_index["f0"].astype(int)
-            toas = sampled_index["f1"].copy() * 1e9
+            toas = sampled_index["f1"].copy()
+            tofs = toas % NMX_PERIOD        # wrap the toas in the NMX period
+            tofs *= 1e9                     # set to ns
             datagroup.create_dataset("event_id", data=event_ids)
-            t_offset = datagroup.create_dataset("event_time_offset", data=toas)
+            t_offset = datagroup.create_dataset("event_time_offset", data=tofs.astype(int))
             t_offset.attrs["units"] = "ns"
 
             # placesetters for figuring out later- how to make this look more like "events per pulse"
@@ -318,6 +337,7 @@ def parse_args():
     )
     parser.add_argument("input_file", type=str, help="Input HDF5 file path")
     parser.add_argument(
+        "-o",
         "--output_file",
         type=str,
         help="Output NeXus file path",
@@ -345,9 +365,15 @@ def parse_args():
         "--range", type=int, default=3, help="Number of panels (default: 3)"
     )
     parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Enable verbose logging output",
+    )
+
+    parser.add_argument(
         "--n-samples",
         type=int,
-        default=10**5,
+        default=100_000,
         help="Number of samples (default: 100_000)",
     )
     return parser.parse_args()
@@ -355,6 +381,7 @@ def parse_args():
 
 def main():
     args = parse_args()
+    logger = _get_logger(args)
     if args.animation_only:
         datas = []
         try:
@@ -382,9 +409,13 @@ def main():
     if not Path(args.json_file).exists():
         raise FileNotFoundError(f"File {args.json_file} not found.")
     sampled = do_sampling(args.input_file, args.range, args.n_samples)
+
     if Path(args.output_file).exists():
         print(f"Warning: overwriting {args.output_file}...")
+
+    geometry = read_mcstas_geometry_xml(args.input_file)
     create_nexus_file(args.output_file, sampled, args.json_file)
+    mcstas_to_nexus_geometry.insert_geometry_into_nexus(geometry,args.output_file,logger)
     if args.do_histogram:
         tof_bins = get_tof_bins(sampled)
         print("Generating histogram...")
