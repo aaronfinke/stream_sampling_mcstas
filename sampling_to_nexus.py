@@ -31,7 +31,10 @@ def write_to_nexus(fp: h5py.File | h5py.Dataset | h5py.Group, entry: Dict):
         # create attributes
         if entry.get("attributes") is not None:
             for attribute in entry.get("attributes"):
-                new_group.attrs[attribute["name"]] = attribute["values"]
+                try:
+                    new_group.attrs[attribute["name"]] = attribute["values"]
+                except TypeError:
+                    print(f"attribute {attribute['name']} is invalid, type is {type(attribute['name'])}")
         for dset in entry["children"]:
             write_to_nexus(new_group, dset)
 
@@ -40,13 +43,17 @@ def write_to_nexus(fp: h5py.File | h5py.Dataset | h5py.Group, entry: Dict):
         dset = fp.create_dataset(entry["config"].get("name"), data=data)
         if entry.get("attributes") is not None:
             for attribute in entry.get("attributes"):
-                dset.attrs[attribute["name"]] = attribute["values"]
+                try:
+                    dset.attrs[attribute["name"]] = attribute["values"]
+                except TypeError:
+                    print(f"attribute {attribute['name']} is invalid, type is {type(attribute['name'])}")
+    
 
 
 def redistribute_sampling(sampled):
     pixids = sampled["f0"]
-    d1 = sampled[pixids < 1280 * 1280]
-    d0 = sampled[(1280 * 1280 <= pixids) & (pixids < 2 * 1280 * 1280)]
+    d0 = sampled[pixids < 1280 * 1280]
+    d1 = sampled[(1280 * 1280 <= pixids) & (pixids < 2 * 1280 * 1280)]
     d2 = sampled[(pixids >= 2 * 1280 * 1280)]
     return [d0, d1, d2]
 
