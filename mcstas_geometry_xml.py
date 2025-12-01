@@ -540,7 +540,7 @@ class McStasInstrument:
 
 def read_mcstas_geometry_xml(
     file_path: str | pathlib.Path,
-    xml_path: str = "entry/instrument/instrument_xml/data",
+    xml_path: str = "entry1/instrument/instrument_xml/data",
 ) -> McStasInstrument:
     """Retrieve geometry parameters from mcstas file"""
     if pathlib.Path(file_path).suffix == ".xml":
