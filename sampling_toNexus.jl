@@ -76,7 +76,7 @@ function sample_all_frames(filename, indices, n, alg)
     return value(merge(rs...))
 end
 
-function sample_all_frame_mask(filename, indices, n, alg)
+function sample_all_frames_mask(filename, indices, n, alg)
     rng = Xoshiro(rand(UInt))
     rs = [ReservoirSampler{NTuple{2, Float64}}(rng, n, alg) for _ in indices]
     mask_set = createMask()
