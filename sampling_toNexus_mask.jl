@@ -67,7 +67,7 @@ function sample_all_frames(filename, indices, n, alg)
     chunksize = 5*10^5
     h5open(filename, "r") do file
         Threads.@threads for (i, index) in collect(enumerate(indices))
-            println("Sampling index $(index)...")
+            @info "Sampling index $(index)..."
             dataname = "entry1/data/Detector_$(index)_event_signal_dat_list_p_x_y_n_id_t/events"
             dset = file[dataname]
             totalsize = size(dset)[2]

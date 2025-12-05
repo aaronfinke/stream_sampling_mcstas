@@ -5,11 +5,11 @@ import time
 import argparse
 from pathlib import Path
 import sys
-from typing import List, Dict
 import logging
 import matplotlib.animation as animation
 import matplotlib as mpl
 import matplotlib.pyplot as plt
+from typing import List, Dict
 
 import mcstas_to_nexus_geometry
 from mcstas_geometry_xml import read_mcstas_geometry_xml
@@ -40,33 +40,44 @@ def _get_logger(args: argparse.Namespace) -> logging.Logger:
     return logger
 
 
-def write_template_to_nexus(fp: h5py.File | h5py.Dataset | h5py.Group, entry: Dict):
-    if entry.get("type") == "group":
+def write_template_to_nexus(fp: h5py.File | h5py.Dataset | h5py.Group, entry: Dict, logger:logging.Logger):
+    def _set_attributes(target: h5py.Group | h5py.Dataset, attrs, logger: logging.Logger):
+        match attrs:
+            case None:
+                return
+            case str():
+                # store raw string under a generic key
+                target.attrs["text"] = attrs
+            case list():
+                for item in attrs:
+                    try:
+                        if isinstance(item, dict) and "name" in item and "values" in item:
+                            target.attrs[item["name"]] = item["values"]
+                        else:
+                            logger.warning(f"Unsupported attribute list item (expect dict with 'name'/'values'): {item!r}")
+                    except Exception as e:
+                        logger.error(f"Failed to set attribute {item!r}: {e}")
+            case dict():
+                try:
+                    for k, v in attrs.items():
+                        target.attrs[k] = v
+                except Exception as e:
+                    logger.error(f"Failed to set dict attributes {attrs!r}: {e}")
+            case _:
+                logger.warning(f"Unsupported attributes type: {type(attrs)}")
+
+    if "group" in entry.get("type",""):
         # create group
         new_group = fp.create_group(entry["name"])
         # create attributes
-        if entry.get("attributes") is not None:
-            for attribute in entry.get("attributes"):
-                try:
-                    new_group.attrs[attribute["name"]] = attribute["values"]
-                except TypeError:
-                    print(f"attribute '{attribute}' in entry '{entry}' is invalid, type is {type(attribute)}")
-                    pass
+        _set_attributes(new_group, entry.get("attributes"), logger)
         for dset in entry["children"]:
-            write_template_to_nexus(new_group, dset)
+            write_template_to_nexus(new_group, dset, logger)
 
-    elif entry.get("module") == "dataset":
+    elif "dataset" in entry.get("module",""):
         data = entry["config"].get("values")
         dset = fp.create_dataset(entry["config"].get("name"), data=data)
-        if entry.get("attributes") is not None:
-            for attribute in entry.get("attributes"):
-                try:
-                    dset.attrs[attribute["name"]] = attribute["values"]
-                except TypeError:
-                    print(f"attribute '{attribute}' in entry '{entry}' is invalid, type is {type(attribute)}")
-                    pass
-    
-
+        _set_attributes(dset, entry.get("attributes"), logger)
 
 def redistribute_sampling(sampled):
     pixids = sampled["f0"]
@@ -75,16 +86,25 @@ def redistribute_sampling(sampled):
     d2 = sampled[(pixids >= 2 * 1280 * 1280)]
     return [d0, d1, d2]
 
-
-def do_sampling(filename: str, range: int = 3, n: int = 10 ** 5) -> List[np.ndarray]:
+def do_sampling(args:argparse.Namespace,filename: str, logger:logging.Logger, range: int = 3, n: int = 10 ** 5) -> List[np.ndarray]:
     rangeval = f"0:{range - 1}"
-    eval_statement = f'sample_all_frames("{filename}", {rangeval}, {n}, AlgWRSWRSKIP())'
-    print(f"Running {eval_statement} ...")
+    if args.use_mask:
+        logger.info("Using mask around beam center.")
+        eval_statement = f'sample_all_frames_mask("{filename}", {rangeval}, {n}, AlgWRSWRSKIP())'
+    else:
+        eval_statement = f'sample_all_frames("{filename}", {rangeval}, {n}, AlgWRSWRSKIP())'
+    logger.info(f"Running {eval_statement} ...")
     t1 = time.perf_counter()
     sampled_jl = jl.seval(eval_statement)
-    print(f"... done. Took {time.perf_counter() - t1:.2f} s.")
+    logger.info(f"... done. Took {time.perf_counter() - t1:.2f} s.")
     sampled = sampled_jl.to_numpy()
-    return redistribute_sampling(sampled)
+    redistributed = redistribute_sampling(sampled)
+    totsamp = 0
+    for i,sample in enumerate(redistributed):
+        logger.info(f"Number of samples in panel {i}: {len(sample)}")
+        totsamp += len(sample)
+    logger.debug(f"Total samples: {totsamp}")
+    return redistributed
 
 
 def load_json_dict(json_path):
@@ -93,22 +113,22 @@ def load_json_dict(json_path):
     return json.load(open(json_path))
 
 
-def create_nexus_file(output_file: str, sampled: List[np.ndarray], json_template: str):
+def create_nexus_file(args: argparse.Namespace, output_file: str, sampled: List[np.ndarray], json_template: str, logger:logging.Logger):
     
     metadata_dict = load_json_dict(json_template)
     subtopics = metadata_dict["children"][0]
 
     with h5py.File(output_file, "w") as fp:
-        write_template_to_nexus(fp, subtopics)
+        write_template_to_nexus(fp, subtopics, logger)
         for index in range(3):
-            datagroup = fp[f"entry/instrument/detector_panel_{index}/data"]
+            datagroup: h5py.Group = fp[f"entry/instrument/detector_panel_{index}/data"]
             datagroup.create_dataset("cue_index", data=0)
             datagroup.create_dataset("cue_timestamp_0", data=0)
             sampled_index = sampled[index]
             event_ids = sampled_index["f0"].astype(int)
             toas = sampled_index["f1"].copy()
-            tofs = toas % NMX_PERIOD        # wrap the toas in the NMX period
-            tofs *= 1e9                     # set to ns
+            tofs = toas if args.no_wrap_tofs else toas % NMX_PERIOD        # wrap the toas in the NMX period
+            tofs *= 1e9   # set to ns
             datagroup.create_dataset("event_id", data=event_ids)
             t_offset = datagroup.create_dataset("event_time_offset", data=tofs.astype(int))
             t_offset.attrs["units"] = "ns"
@@ -123,20 +143,49 @@ def create_nexus_file(output_file: str, sampled: List[np.ndarray], json_template
             evt_time_zero.attrs["units"] = "ns"
 
 
-def get_tof_bins(results: List[np.ndarray], n=50):
+def get_tof_bins(args: argparse.Namespace, results: List[np.ndarray], logger:logging.Logger, n=50):
     """
-    hardcoding the tof bins as NMX-specific.
-    Any events longer than 144 ms are probably erroneous.
-    Any events shorter than 71 ms are impossible.
+    Get bins from tofs. These will probably be wrapped to the NMX pulse (14 Hz).
     """
-    tofmin = 0.071
-    tofmax = 0.145
+    nmx_period = 0 if args.no_wrap_tofs else NMX_PERIOD
+    tofmin = np.inf
+    tofmax = -1
+    for i,result in enumerate(results):
+        print(type(result))
+        print(result)
+        toas = result["f1"]
+        sample_max  = toas.max()
+        if sample_max + nmx_period > 0.145:
+            logger.warning(f"Panel {i} has tof_max of {sample_max + nmx_period}")
+        sample_min = toas.min()
+        tofmin = sample_min if sample_min < tofmin else tofmin
+        tofmax = sample_max if sample_max > tofmax else tofmax
     tofs = np.linspace(tofmin, tofmax, n)
-    print(f"tof_min: {tofmin}, tof_max: {tofmax}")
+    logger.info(f"tof_min: {tofmin}, tof_max: {tofmax}")
+    return tofs
+
+def get_tof_bins_from_hdf5(args: argparse.Namespace, results: List[np.ndarray], logger:logging.Logger, n=50):
+    """
+    Get bins from tofs. These will probably be wrapped to the NMX pulse (14 Hz).
+    """
+    nmx_period = 0 if args.no_wrap_tofs else NMX_PERIOD
+    tofmin = np.inf
+    tofmax = -1
+    for i,result in enumerate(results):
+        toas = result[:,1] / 1e9
+        sample_max  = toas.max()
+        if sample_max + nmx_period > 0.145:
+            logger.warning(f"Panel {i} has tof_max of {sample_max + nmx_period}")
+        sample_min = toas.min()
+        tofmin = sample_min if sample_min < tofmin else tofmin
+        tofmax = sample_max if sample_max > tofmax else tofmax
+    tofs = np.linspace(tofmin, tofmax, n)
+    logger.info(f"tof_min: {tofmin + nmx_period}, tof_max: {tofmax + nmx_period}")
     return tofs
 
 
-def make_histogram(data_list: List, time_bin_edges: np.ndarray) -> List[np.ndarray]:
+
+def make_histogram(data_list: List, time_bin_edges: np.ndarray, logger:logging.Logger) -> List[np.ndarray]:
     # Define time binning parameters
     n_time_bins = len(time_bin_edges)
 
@@ -169,11 +218,11 @@ def make_histogram(data_list: List, time_bin_edges: np.ndarray) -> List[np.ndarr
     # detector_time_series = pixel_counts_per_bin.reshape(n_time_bins, 1280, 1280)
     # detector_time_series_corrected = detector_time_series.transpose((1, 2, 0))
     for i, data in enumerate(data_panels):
-        print(f"Shape of histogram {i}: {data.shape}")
+        logger.debug(f"Shape of histogram {i}: {data.shape}")
     # np.save("data.npy", data_panels)
     return data_panels
 
-def make_histogram_from_hdf5(data_list: List, time_bin_edges: np.ndarray) -> List[np.ndarray]:
+def make_histogram_from_hdf5(data_list: List, time_bin_edges: np.ndarray, logger:logging.Logger) -> List[np.ndarray]:
     # Define time binning parameters
     n_time_bins = len(time_bin_edges)
 
@@ -206,7 +255,7 @@ def make_histogram_from_hdf5(data_list: List, time_bin_edges: np.ndarray) -> Lis
     # detector_time_series = pixel_counts_per_bin.reshape(n_time_bins, 1280, 1280)
     # detector_time_series_corrected = detector_time_series.transpose((1, 2, 0))
     for i, data in enumerate(data_panels):
-        print(f"Shape of histogram {i}: {data.shape}")
+        logger.debug(f"Shape of histogram {i}: {data.shape}")
     # np.save("data.npy", data_panels)
     return data_panels
 
@@ -253,6 +302,7 @@ def sum_plot(histo,folder: Path = Path.cwd(),):
     fig.savefig(str(folder / "allbins.png"))
 
 def make_animation(
+    args:argparse.Namespace,
     datasets: List[np.ndarray],
     tofs: np.ndarray,
     folder: Path = Path.cwd(),
@@ -260,6 +310,7 @@ def make_animation(
     low_sigma=0.0,
     high_sigma=2.0,
 ):
+    nmx_period = 0 if args.no_wrap_tofs else NMX_PERIOD
     # Compute global limits across all panels/frames
     combined = np.concatenate([d[d > 0].ravel() for d in datasets if d.size > 0])
     vmin, vmax = _sigma_limits(combined, low_sigma=low_sigma, high_sigma=high_sigma)
@@ -306,7 +357,7 @@ def make_animation(
             im.set_array(data[:, :, frame])
             if i == 1:
                 axes[i].set_title(
-                    f"Panel {i} - Frame: {frame} / {data.shape[2] - 1}, tof {tofs[frame] * 1e3:.1f} ms"
+                    f"Panel {i} - Frame: {frame} / {data.shape[2] - 1}, tof {(tofs[frame] + nmx_period) * 1e3:.1f} ms"
                 )
             else:
                 axes[i].set_title(f"Panel {i} - Frame: {frame} / {data.shape[2] - 1}")
@@ -330,12 +381,44 @@ def make_animation(
         fps=5,
     )
 
+def animation_only(args, logger: logging.Logger):
+    """Generates the animations only, using sampling output."""
+    datas = []
+    try:
+        logger.info(f"Loading file {args.input_file}...")
+        with h5py.File(args.input_file) as fp:
+            for i in range(3):
+                data = fp[f"entry/instrument/detector_panel_{i}/data"]
+                pixids = data["event_id"][:]
+                tofs = data["event_time_offset"][:]
+                datas.append(np.column_stack((pixids,tofs)))
+    except (KeyError, FileNotFoundError) as e:
+        logger.error(f"Error in reading HDF5: {e}")
+        raise
+    sampled = [np.array(x) for x in datas]
+    tof_bins = get_tof_bins_from_hdf5(args,sampled,logger=logger)
+    print(tof_bins)
+    logger.info("Generating histogram...")
+    histo = make_histogram_from_hdf5(sampled, tof_bins,logger=logger)
+    del sampled
+    sum_plot(histo, Path(args.input_file).parent)
+
+    logger.info("Generating animation...")
+    make_animation(args,histo, tof_bins, Path(args.input_file).parent)
+
+
 
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Sample HDF5 data and create NeXus file"
     )
-    parser.add_argument("input_file", type=str, help="Input HDF5 file path")
+    parser.add_argument(
+        "-i",
+        "--input_file", 
+        type=str, 
+        required=True,
+        help="Input HDF5 file path")
+    
     parser.add_argument(
         "-o",
         "--output_file",
@@ -345,11 +428,29 @@ def parse_args():
         required=False,
     )
     parser.add_argument(
+        "-n",
+        "--n-samples",
+        type=int,
+        default=100_000,
+        help="Number of samples (default: 100_000)",
+    )
+    parser.add_argument(
         "-j",
         "--json-file",
         type=str,
         help="Path to json template",
         default=NMX_JSON_PATH,
+    )
+    parser.add_argument(
+        "-x",
+        "--xml",
+        type=str,
+        help="Mantid xml geometry file (if the one in McStas file is not to be used)"
+    )
+    parser.add_argument(
+        "--use-mask",
+        action="store_true",
+        help="Use a mask around the beam center. Useful for ensuring direct beam is not oversampled."
     )
     parser.add_argument(
         "--do-histogram",
@@ -362,19 +463,20 @@ def parse_args():
         help="Generate animation only (after sampling)",
     )
     parser.add_argument(
-        "--range", type=int, default=3, help="Number of panels (default: 3)"
+        "--range",
+        type=int,
+        default=3,
+        help="Number of panels (default: 3)"
+    )
+    parser.add_argument(
+        "--no-wrap-tofs",
+        action="store_true",
+        help="Don't wrap tof values to ESS pulse length (14 Hz)"
     )
     parser.add_argument(
         "--verbose",
         action="store_true",
         help="Enable verbose logging output",
-    )
-
-    parser.add_argument(
-        "--n-samples",
-        type=int,
-        default=100_000,
-        help="Number of samples (default: 100_000)",
     )
     return parser.parse_args()
 
@@ -383,47 +485,32 @@ def main():
     args = parse_args()
     logger = _get_logger(args)
     if args.animation_only:
-        datas = []
-        try:
-            print(f"Loading file {args.input_file}...")
-            with h5py.File(args.input_file) as fp:
-                for i in range(3):
-                    data = fp[f"entry/instrument/detector_panel_{i}/data"]
-                    pixids = data["event_id"][:]
-                    tofs = data["event_time_offset"][:]
-                    datas.append(np.column_stack((pixids,tofs)))
-        except (KeyError, FileNotFoundError) as e:
-            print(f"Error in reading HDF5: {e}")
-            raise
-        sampled = [np.array(x) for x in datas]
-        tof_bins = get_tof_bins(sampled)
-        print("Generating histogram...")
-        histo = make_histogram_from_hdf5(sampled, tof_bins)
-        del sampled
-        sum_plot(histo, Path(args.input_file).parent)
-
-        print("Generating animation...")
-        make_animation(histo, tof_bins, Path(args.input_file).parent)
+        animation_only(args,logger)
         sys.exit(0)
 
     if not Path(args.json_file).exists():
         raise FileNotFoundError(f"File {args.json_file} not found.")
-    sampled = do_sampling(args.input_file, args.range, args.n_samples)
+    sampled = do_sampling(args=args, filename=args.input_file, logger=logger, range=args.range, n=args.n_samples)
 
     if Path(args.output_file).exists():
-        print(f"Warning: overwriting {args.output_file}...")
-
-    geometry = read_mcstas_geometry_xml(args.input_file)
-    create_nexus_file(args.output_file, sampled, args.json_file)
-    mcstas_to_nexus_geometry.insert_geometry_into_nexus(geometry,args.output_file,logger)
+        logger.warning(f"Overwriting {args.output_file}...")
+    if args.no_wrap_tofs:
+        logger.warning(f"Not wrapping tofs to NMX pulse length.")
+    if args.xml:
+        logger.info(f"Using geometry from xml file {args.xml}...")
+        geometry = mcstas_to_nexus_geometry.load_xml_geometry(Path(args.xml),logger=logger)
+    else:
+        geometry = read_mcstas_geometry_xml(Path(args.input_file))
+    create_nexus_file(args, args.output_file, sampled, args.json_file, logger=logger)
+    mcstas_to_nexus_geometry.insert_geometry_into_nexus(geometry,Path(args.output_file),logger)
     if args.do_histogram:
-        tof_bins = get_tof_bins(sampled)
-        print("Generating histogram...")
-        histo = make_histogram(sampled, tof_bins)
-        print("Saving sum plot...")
+        tof_bins = get_tof_bins(args,sampled,logger=logger)
+        logger.info("Generating histogram...")
+        histo = make_histogram(sampled, tof_bins,logger=logger)
+        logger.info("Saving sum plot...")
         sum_plot(histo, Path(args.output_file).parent)
-        print("Generating animation...")
-        make_animation(histo, tof_bins, Path(args.output_file).parent)
+        logger.info("Generating animation...")
+        make_animation(args,histo, tof_bins, Path(args.output_file).parent)
 
 
 if __name__ == "__main__":
