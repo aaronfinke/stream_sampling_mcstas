@@ -20,3 +20,4 @@ __pycache__/
 pixi.*
 .DS_Store
 .gitattributes
+.idea
