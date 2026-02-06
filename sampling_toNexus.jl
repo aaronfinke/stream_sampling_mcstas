@@ -16,6 +16,23 @@ function sample_frame(filename, index, rng, n, alg)
     return value(rs)
 end
 
+function sample_frame_generic(filename, dataname, n, alg)
+    rng = Xoshiro(rand(UInt))
+    rs = ReservoirSampler{NTuple{2, Float64}}(rng, n, alg)
+    chunksize = 5*10^5
+    h5open(filename, "r") do file
+        dset = file[dataname]
+        totalsize = size(dset)[2]
+        for ch in chunks(1:totalsize, n=ceil(Int, totalsize/chunksize))
+            for c in eachcol(dset[:, ch])
+                fit!(rs, (c[5], c[6]), c[1])
+            end
+        end
+    end
+    return value(rs)
+end
+
+
 function createMask(xrange::AbstractRange=590:690,yrange::AbstractRange=590:690,
                     detector_id::Int=1,grid_width::Int=1280,grid_height::Int=1280)
     x = collect(xrange)
@@ -44,6 +61,25 @@ function sample_frame_mask(filename, index, rng, n, alg)
     return value(rs)
 end
 
+function sample_frame_mask_generic(filename, dataname, rng, n, alg)
+    rs = ReservoirSampler{NTuple{2, Float64}}(rng, n, alg)
+    chunksize = 5*10^5
+    mask_set = createMask()
+    h5open(filename, "r") do file
+        dset = file[dataname]
+        totalsize = size(dset)[2]
+        for ch in chunks(1:totalsize, n=ceil(Int, totalsize/chunksize))
+            chunk_data = dset[:, ch]
+            filtered_data = chunk_data[:,.!(in.(chunk_data[5,:], Ref(mask_set)))]
+            for c in eachcol(filtered_data)
+                fit!(rs, (c[5], c[6]), c[1])
+            end
+        end
+    end
+    return value(rs)
+end
+
+
 
 function sample_frames(filename, indices, n, alg)
     results = Vector{Vector{NTuple{2, Float64}}}(undef, length(indices))
@@ -55,6 +91,18 @@ function sample_frames(filename, indices, n, alg)
     end
     return results
 end
+
+function sample_frames_generic(filename, datasets, n, alg)
+    results = Vector{Vector{NTuple{2, Float64}}}(undef, length(datasets))
+    rngs = [Xoshiro(rand(UInt)) for _ in 1:Threads.nthreads()]
+    Threads.@threads for (i, c) in enumerate(chunks(1:length(datasets), n=Threads.nthreads()))
+        for j in c
+            results[j] = sample_frame_generic(filename, datasets[j], rngs[i], n, alg)
+        end
+    end
+    return results
+end
+
 
 function sample_all_frames(filename, indices, n, alg)
     rng = Xoshiro(rand(UInt))
