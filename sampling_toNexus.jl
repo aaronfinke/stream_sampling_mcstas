@@ -124,6 +124,26 @@ function sample_all_frames(filename, indices, n, alg)
     return value(merge(rs...))
 end
 
+function sample_all_frames_generic(filename, datasets, n, alg)
+    rng = Xoshiro(rand(UInt))
+    rs = [ReservoirSampler{NTuple{2, Float64}}(rng, n, alg) for _ in datasets]
+    chunksize = 5*10^5
+    h5open(filename, "r") do file
+        for (i, dataset) in collect(enumerate(datasets))
+            @info "Sampling dataset $(dataset)..."
+            dset = file[dataset]
+            totalsize = size(dset)[2]
+            for ch in chunks(1:totalsize, n=ceil(Int, totalsize/chunksize))
+                for c in eachcol(dset[:, ch])
+                    fit!(rs[i], (c[5], c[6]), c[1])
+                end
+            end       
+        end
+    end
+    return value(merge(rs...))
+end
+
+
 function sample_all_frames_mask(filename, indices, n, alg)
     rng = Xoshiro(rand(UInt))
     rs = [ReservoirSampler{NTuple{2, Float64}}(rng, n, alg) for _ in indices]
