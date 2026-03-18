@@ -175,9 +175,9 @@ def main():
             logger.info("Generating histogram...")
             histo = sampling_to_nexus.make_histogram(sampled, tof_bins,logger=logger)
             logger.info("Saving sum plot...")
-            sampling_to_nexus.sum_plot(histo, output_file_path, filename=f"config{confignum}_allbins.png")
+            sampling_to_nexus.sum_plot(histo, output_file_path.parent, filename=f"config{confignum}_allbins.png")
             logger.info("Generating animation...")
-            sampling_to_nexus.make_animation(args,histo, tof_bins, output_file_path, filename=f"config{confignum}_3panel_animation.gif")
+            sampling_to_nexus.make_animation(args,histo, tof_bins, output_file_path.parent, filename=f"config{confignum}_3panel_animation.gif")
 
 
 
