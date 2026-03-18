@@ -160,8 +160,8 @@ def main():
             dataset = s.substitute(detnum=detnum,confignum=confignum)
             datasets.append(dataset)
         sampled = do_sampling(args, datasets, args.input_file, logger, n=args.n_samples)
-        output_file_path = Path(args.output_file).parent
-        output_file =  Path(args.output_file).parent / f"config{confignum}_{args.output_file}"
+        output_file_path = Path(args.output_file).resolve()
+        output_file =  output_file_path.parent / f"config{confignum}_{output_file_path.name}"
 
         sampling_to_nexus.create_nexus_file(args=args, 
                                             output_file=output_file, 
