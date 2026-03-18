@@ -311,6 +311,7 @@ def sum_plot(histo,folder: Path = Path.cwd(),filename="allbins.png"):
     cbar = fig.colorbar(ims[0], cax=cbar_ax)
     cbar.set_label("Intensity")
     fig.savefig(str(folder / filename), dpi=600, bbox_inches="tight")
+    plt.close()
 
 def make_animation(
     args:argparse.Namespace,
@@ -394,6 +395,8 @@ def make_animation(
         fps=5,
     )
 
+    plt.close()
+
 def animation_only(args, logger: logging.Logger):
     """Generates the animations only, using sampling output."""
     datas = []
@@ -418,6 +421,7 @@ def animation_only(args, logger: logging.Logger):
 
     logger.info("Generating animation...")
     make_animation(args,histo, tof_bins, Path(args.input_file).parent)
+    plt.close()
 
 
 
