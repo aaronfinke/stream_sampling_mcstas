@@ -369,7 +369,7 @@ def make_animation(
             im.set_array(data[:, :, frame])
             if i == 1:
                 axes[i].set_title(
-                    f"Panel {i} - Frame: {frame} / {data.shape[2] - 1}, tof {(tofs[frame] + nmx_period) * 1e3:.1f} ms"
+                    f"Panel {i} - Frame: {frame} / {data.shape[2] - 1}, tof {(tofs[frame]) * 1e3:.1f} ms"
                 )
             else:
                 axes[i].set_title(f"Panel {i} - Frame: {frame} / {data.shape[2] - 1}")
