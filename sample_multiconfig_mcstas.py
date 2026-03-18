@@ -39,6 +39,7 @@ def _get_logger(args: argparse.Namespace) -> logging.Logger:
     return logger
 
 
+
 def do_sampling(args:argparse.Namespace,datasets: List[str], filename: str, logger:logging.Logger, n: int = 100_000_000) -> List[np.ndarray]:
 
     def redistribute_sampling(sampled):
@@ -159,7 +160,20 @@ def main():
         for detnum in detnums:
             dataset = s.substitute(detnum=detnum,confignum=confignum)
             datasets.append(dataset)
-        sampled = do_sampling(args, datasets, args.input_file, logger, n=args.n_samples)
+        # check n_samples
+        total = 0
+        n = args.n_samples
+        with h5py.File(args.input_file) as fp:
+            for dataset in datasets:
+                total += len(fp[dataset])
+        if total < args.n_samples:
+            logger.warning(f"Total events ({total}) < n_samples ({args.n_samples}).")
+            logger.warning(f"Setting n_samples to lower value.")
+            while n > total:
+                n /= 2
+            logger.warning(f"New n_samples: {n}")
+
+        sampled = do_sampling(args, datasets, args.input_file, logger, n=n)
         output_file_path = Path(args.output_file).resolve()
         output_file =  output_file_path.parent / f"config{confignum}_{output_file_path.name}"
 
