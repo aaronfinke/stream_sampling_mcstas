@@ -39,6 +39,13 @@ def _get_logger(args: argparse.Namespace) -> logging.Logger:
     logger.setLevel(level)
     return logger
 
+def get_instrument_xml_nexus(
+    file_path: str | Path,
+    xml_path: str = "entry1/instrument/instrument_xml/data",
+) -> str :
+    with h5py.File(file_path) as fp:
+        instrument_xml = fp[xml_path][...][0].decode('UTF-8')
+    return instrument_xml
 
 def write_template_to_nexus(fp: h5py.File | h5py.Dataset | h5py.Group, entry: Dict, logger:logging.Logger):
     def _set_attributes(target: h5py.Group | h5py.Dataset, attrs, logger: logging.Logger):
@@ -86,14 +93,6 @@ def redistribute_sampling(sampled):
     d2 = sampled[(pixids >= 2 * 1280 * 1280)]
     return [d0, d1, d2]
 
-def get_instrument_xml_nexus(
-    file_path: str | Path,
-    xml_path: str = "entry1/instrument/instrument_xml/data",
-) -> str :
-    with h5py.File(file_path) as fp:
-        instrument_xml = fp[xml_path][...][0].decode('UTF-8')
-    return instrument_xml
-
 def do_sampling(args:argparse.Namespace,filename: str, logger:logging.Logger, range: int = 3, n: int = 10 ** 5) -> List[np.ndarray]:
     rangeval = f"0:{range - 1}"
     if args.use_mask:
@@ -128,10 +127,10 @@ def create_nexus_file(args: argparse.Namespace, output_file: str|Path, sampled: 
 
     with h5py.File(output_file, "w") as fp:
         write_template_to_nexus(fp, subtopics, logger)
-        instrument_xml_group: h5py.Group = fp.create_group('entry1/instrument/instrument_xml')
+        instrument_xml_group: h5py.Group = fp.create_group('entry/instrument/instrument_xml')
         instrument_xml_group.create_dataset('data', data=instrument_xml, dtype=h5py.string_dtype(length=len(instrument_xml)))
         instrument_xml_group.create_dataset('description', data='XML contents of the instrument IDF', dtype=h5py.string_dtype(length=34))
-        instrument_xml_group.create_dataset('type', data='text/xml', dtype=h5py.string_dtype(length=8))
+        instrument_xml_group.create_dataset('type', data='text/xml', dtype=h5py.string_dtype(length=8))        
         for index in range(3):
             datagroup: h5py.Group = fp[f"entry/instrument/detector_panel_{index}/data"]
             datagroup.create_dataset("cue_index", data=0)
