@@ -120,7 +120,7 @@ def load_json_dict(json_path):
         raise FileNotFoundError(f"File not found: {json_path}")
     return json.load(open(json_path))
 
-def create_nexus_file(args: argparse.Namespace, output_file: str, sampled: List[np.ndarray], 
+def create_nexus_file(args: argparse.Namespace, output_file: str|Path, sampled: List[np.ndarray], 
                       json_template: str, instrument_xml: str, logger:logging.Logger):
     
     metadata_dict = load_json_dict(json_template)
@@ -286,7 +286,7 @@ def _sigma_limits(
         vmax = vmin * 10.0
     return vmin, vmax
 
-def sum_plot(histo,folder: Path = Path.cwd(),):
+def sum_plot(histo,folder: Path = Path.cwd(),filename="allbins.png"):
     processed = [dset.sum(axis=2) for dset in histo]
 
     combined = np.concatenate([d[d > 0].ravel() for d in processed if d.size > 0])
@@ -311,7 +311,7 @@ def sum_plot(histo,folder: Path = Path.cwd(),):
     cbar_ax = fig.add_axes([0.92, 0.15, 0.02, 0.7])
     cbar = fig.colorbar(ims[0], cax=cbar_ax)
     cbar.set_label("Intensity")
-    fig.savefig(str(folder / "allbins.png"))
+    fig.savefig(str(folder / filename))
 
 def make_animation(
     args:argparse.Namespace,
@@ -321,6 +321,7 @@ def make_animation(
     fps=5,
     low_sigma=0.0,
     high_sigma=2.0,
+    filename: str="3panel_animation.gif"
 ):
     nmx_period = 0 if args.no_wrap_tofs else NMX_PERIOD
     # Compute global limits across all panels/frames
@@ -388,8 +389,9 @@ def make_animation(
 
     # To save as GIF (uncomment if needed):
     anim.save(
-        folder / "3panel_animation.gif",
+        str(folder / filename),
         writer='pillow',
+        dpi=300,
         fps=5,
     )
 

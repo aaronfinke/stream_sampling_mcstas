@@ -46,7 +46,7 @@ function sample_frame_mask(filename, index, rng, n, alg)
     rs = ReservoirSampler{NTuple{2, Float64}}(rng, n, alg)
     chunksize = 5*10^5
     mask_set = createMask()
-    dataname = "entry1/data/Detector_1_event_signal_dat_list_p_x_y_n_id_t/events"
+    dataname = "entry1/data/Detector_$(index)_event_signal_dat_list_p_x_y_n_id_t/events"
     h5open(filename, "r") do file
         dset = file[dataname]
         totalsize = size(dset)[2]
