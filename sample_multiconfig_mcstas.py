@@ -16,11 +16,11 @@ import mcstas_geometry_xml
 import mcstas_to_nexus_geometry
 import sys
 
-julia_path = Path("/project/project_465002587/stream_sampling_mcstas")
+julia_path = Path(__file__).parent
 jl.include(str(julia_path / "sampling_toNexus.jl"))
 NMX_PERIOD = 1/14
 mpl.rcParams["animation.embed_limit"] = 500
-NMX_JSON_PATH = "/project/project_465002030/streaming_mcstas_nexus.json"
+NMX_JSON_PATH = Path(__file__).parent / "nmx.json"
 
 def _get_logger(args: argparse.Namespace) -> logging.Logger:
     # Parse arguments for logging level
@@ -55,7 +55,15 @@ def do_sampling(args:argparse.Namespace,datasets: List[str], filename: str, logg
     eval_statement = f'sample_all_frames_generic("{filename}", "{datasets}", {n}, AlgWRSWRSKIP())'
     logger.info(f"Running {eval_statement} ...")
     t1 = perf_counter()
-    sampled_jl = jl.seval(eval_statement)
+    # sampled_jl = jl.seval(eval_statement)
+    sampled_jl = jl.sample_all_frames_generic(
+        filename,
+        datasets, # Python list[str]
+        n,
+        jl.AlgWRSWRSKIP(),
+    )
+
+
     logger.info(f"... done. Took {perf_counter() - t1:.2f} s.")
     sampled = sampled_jl.to_numpy()
     redistributed = redistribute_sampling(sampled)
@@ -144,11 +152,9 @@ def main():
         geometry = mcstas_to_nexus_geometry.load_xml_geometry(Path(args.xml),logger=logger)
     else:
         geometry = mcstas_geometry_xml.read_mcstas_geometry_xml(Path(args.input_file))
-        instrument_xml = mcstas_geometry_xml.get_instrument_xml_nexus(file_path=args.input_file)
+        instrument_xml = sampling_to_nexus.get_instrument_xml_nexus(file_path=args.input_file)
 
-    configs = {}
     for confignum in confignums:
-        
         datasets = []
         for detnum in detnums:
             dataset = s.substitute(detnum=detnum,confignum=confignum)
@@ -171,7 +177,7 @@ def main():
             logger.info("Saving sum plot...")
             sampling_to_nexus.sum_plot(histo, output_file_path, filename=f"config{confignum}_allbins.png")
             logger.info("Generating animation...")
-            sampling_to_nexus.make_animation(args,histo, tof_bins, output_file_path, filename=f"config{confignum}3panel_animation.gif")
+            sampling_to_nexus.make_animation(args,histo, tof_bins, output_file_path, filename=f"config{confignum}_3panel_animation.gif")
 
 
 
