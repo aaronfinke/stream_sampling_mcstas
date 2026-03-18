@@ -310,7 +310,7 @@ def sum_plot(histo,folder: Path = Path.cwd(),filename="allbins.png"):
     cbar_ax = fig.add_axes([0.92, 0.15, 0.02, 0.7])
     cbar = fig.colorbar(ims[0], cax=cbar_ax)
     cbar.set_label("Intensity")
-    fig.savefig(str(folder / filename))
+    fig.savefig(str(folder / filename), dpi=600, bbox_inches="tight")
 
 def make_animation(
     args:argparse.Namespace,
