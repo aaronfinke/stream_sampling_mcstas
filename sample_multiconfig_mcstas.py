@@ -170,7 +170,7 @@ def main():
             logger.warning(f"Total events ({total}) < n_samples ({args.n_samples}).")
             logger.warning(f"Setting n_samples to lower value.")
             while n > total:
-                n /= 2
+                n //= 2
             logger.warning(f"New n_samples: {n}")
 
         sampled = do_sampling(args, datasets, args.input_file, logger, n=n)
