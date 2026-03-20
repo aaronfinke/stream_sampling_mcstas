@@ -269,24 +269,44 @@ def _overwrite_source_transformations(
 
 def _map_mcstas_to_nexus_detector_name(
     nexus_detector_names: list[str],
-    mcstas_detector_names: list[str],
+    mcstas_detector_names: dict[int, str],
     *,
     logger: logging.Logger,
 ) -> dict[str, str]:
+    if len(nexus_detector_names) < len(mcstas_detector_names):
+        raise ValueError(
+            "There are not enough detector names to be paired with mcstas detector names. "
+            "Check if the template nexus file is correct or provide explicit names of "
+            "detectors in the mcstas simulation.\n"
+            "Here are the detector names found in the nexus file: \n"
+            + ", ".join(nexus_detector_names)
+            + "\nAnd here are the detector names found in the simulation: \n"
+            + ", ".join(mcstas_detector_names.values())
+        )
     detector_names = sorted(nexus_detector_names)
-    mcstas_detector_names = sorted(mcstas_detector_names)
     logger.debug("Found detectors: %s", detector_names)
-    mcstas_to_nexus_detector_name_map = dict(
-        zip(mcstas_detector_names, detector_names, strict=False)
-        # We cut off extra detectors in the nexus file and only use
-        # as many as in the mcstas geometry.
-        # It is because nexus file may contain extra placeholder detectors.
-    )
-    logger.debug(
+    mcstas_to_nexus_detector_name_map = {
+        det: nexus_detector_names[idet] for idet, det in mcstas_detector_names.items()
+    }
+    # We cut off extra detectors in the nexus file and only use
+    # as many as in the mcstas geometry or selected mcstas detector names.
+    # It is because nexus file may contain extra placeholder detectors.
+    logger.info(
         "Mapping detectors from XML geometry to NeXus file like this: %s,",
         mcstas_to_nexus_detector_name_map,
     )
     return mcstas_to_nexus_detector_name_map
+
+
+def _parse_or_match_detector_names(names: str, candidates: list[str]) -> dict[int, str]:
+    if "," in names:
+        return {iname: name.strip() for iname, name in enumerate(names.split(","))}
+    else:  # try matching instead.
+        import re
+
+        matches = [cand for cand in candidates if re.search(names, cand) is not None]
+        matches = sorted(matches)
+        return {iname: name for iname, name in enumerate(matches)}
 
 
 def insert_geometry_into_nexus(
@@ -294,6 +314,7 @@ def insert_geometry_into_nexus(
     output_file: Path,
     logger: logging.Logger,
     crystal_rotation_file_path: str = "",
+    simulation_detector_names: dict[int, str] = {},
 ):
     # Try loading crystal rotation if file path is provided
     if crystal_rotation_file_path:
@@ -323,9 +344,12 @@ def insert_geometry_into_nexus(
         detectors = inst_gr[snx.NXdetector].keys()
 
     mcstas_det_map = {det.name: det for det in geometry.detectors}
+    simulation_detector_names = simulation_detector_names or {
+        idet: det for idet, det in enumerate(mcstas_det_map.keys())
+    }
     mcstas_to_nexus_names = _map_mcstas_to_nexus_detector_name(
         nexus_detector_names=list(detectors),
-        mcstas_detector_names=list(mcstas_det_map.keys()),
+        mcstas_detector_names=simulation_detector_names,
         logger=logger,
     )
 
@@ -364,6 +388,7 @@ def insert_geometry_into_nexus(
                 sample_desc=geometry.sample,
                 handedness=geometry.simulation_settings.handedness,
             )
+            nexus_det.attrs["original-mcstas-detector-name"] = mcstas_det_name
 
 
 def wrap_event_time_offsets(
@@ -447,6 +472,14 @@ def parse_args():
         "**Note**: This option is a temporary workaround "
         "until the sampling implementation is updated.",
     )
+    parser.add_argument(
+        "--simulation-detector-names",
+        type=str,
+        default="",
+        help="Manually select detector names to parse the geometry from. "
+        "If not provided, it will try finding the detector with the same names as nexus file. "
+        "For multiple detector names, provide all names with comma separator. ",
+    )
     return parser.parse_args()
 
 
@@ -472,11 +505,31 @@ def main():
             stacklevel=3,
         )
 
+    sim_det_names_from_xml = [det.name for det in simulation_geometry.detectors]
+    if args.simulation_detector_names:
+        sim_detector_names = _parse_or_match_detector_names(
+            args.simulation_detector_names, sim_det_names_from_xml
+        )
+    else:
+        sim_detector_names = {}
+
+    not_matching_sim_det_names = [
+        det_name
+        for det_name in sim_detector_names.values()
+        if det_name not in sim_det_names_from_xml
+    ]
+    if any(not_matching_sim_det_names):
+        raise ValueError(
+            "Selected simulation detector names are not found in the xml description. "
+            "Here are the availbale names: \n" + ", ".join(sim_det_names_from_xml)
+        )
+
     insert_geometry_into_nexus(
         simulation_geometry,
         output_file_path,
         logger,
         crystal_rotation_file_path=args.crystal_rotation_file_path,
+        simulation_detector_names=sim_detector_names,
     )
 
     if args.wrap_event_time_offset:
