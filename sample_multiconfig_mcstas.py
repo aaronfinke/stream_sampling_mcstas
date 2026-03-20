@@ -78,7 +78,7 @@ def do_sampling(args:argparse.Namespace,datasets: List[str], filename: str, logg
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Sample HDF5 data and create NeXus file"
+        description="Sample McStas/Nexus data and create NeXus file. For McStas files with multiple detector configurations."
     )
     parser.add_argument(
         "-i",
