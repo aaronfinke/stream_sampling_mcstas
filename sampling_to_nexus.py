@@ -39,6 +39,13 @@ def _get_logger(args: argparse.Namespace) -> logging.Logger:
     logger.setLevel(level)
     return logger
 
+def get_instrument_xml_nexus(
+    file_path: str | Path,
+    xml_path: str = "entry1/instrument/instrument_xml/data",
+) -> str :
+    with h5py.File(file_path) as fp:
+        instrument_xml = fp[xml_path][...][0].decode('UTF-8')
+    return instrument_xml
 
 def write_template_to_nexus(fp: h5py.File | h5py.Dataset | h5py.Group, entry: Dict, logger:logging.Logger):
     def _set_attributes(target: h5py.Group | h5py.Dataset, attrs, logger: logging.Logger):
@@ -112,14 +119,18 @@ def load_json_dict(json_path):
         raise FileNotFoundError(f"File not found: {json_path}")
     return json.load(open(json_path))
 
-
-def create_nexus_file(args: argparse.Namespace, output_file: str, sampled: List[np.ndarray], json_template: str, logger:logging.Logger):
+def create_nexus_file(args: argparse.Namespace, output_file: str|Path, sampled: List[np.ndarray], 
+                      json_template: str, instrument_xml: str, logger:logging.Logger):
     
     metadata_dict = load_json_dict(json_template)
     subtopics = metadata_dict["children"][0]
 
     with h5py.File(output_file, "w") as fp:
         write_template_to_nexus(fp, subtopics, logger)
+        instrument_xml_group: h5py.Group = fp.create_group('entry/instrument/instrument_xml')
+        instrument_xml_group.create_dataset('data', data=instrument_xml, dtype=h5py.string_dtype(length=len(instrument_xml)))
+        instrument_xml_group.create_dataset('description', data='XML contents of the instrument IDF', dtype=h5py.string_dtype(length=34))
+        instrument_xml_group.create_dataset('type', data='text/xml', dtype=h5py.string_dtype(length=8))        
         for index in range(3):
             datagroup: h5py.Group = fp[f"entry/instrument/detector_panel_{index}/data"]
             datagroup.create_dataset("cue_index", data=0)
@@ -274,7 +285,7 @@ def _sigma_limits(
         vmax = vmin * 10.0
     return vmin, vmax
 
-def sum_plot(histo,folder: Path = Path.cwd(),):
+def sum_plot(histo,folder: Path = Path.cwd(),filename="allbins.png"):
     processed = [dset.sum(axis=2) for dset in histo]
 
     combined = np.concatenate([d[d > 0].ravel() for d in processed if d.size > 0])
@@ -299,7 +310,8 @@ def sum_plot(histo,folder: Path = Path.cwd(),):
     cbar_ax = fig.add_axes([0.92, 0.15, 0.02, 0.7])
     cbar = fig.colorbar(ims[0], cax=cbar_ax)
     cbar.set_label("Intensity")
-    fig.savefig(str(folder / "allbins.png"))
+    fig.savefig(str(folder / filename), dpi=600, bbox_inches="tight")
+    plt.close()
 
 def make_animation(
     args:argparse.Namespace,
@@ -309,6 +321,7 @@ def make_animation(
     fps=5,
     low_sigma=0.0,
     high_sigma=2.0,
+    filename: str="3panel_animation.gif"
 ):
     nmx_period = 0 if args.no_wrap_tofs else NMX_PERIOD
     # Compute global limits across all panels/frames
@@ -357,7 +370,7 @@ def make_animation(
             im.set_array(data[:, :, frame])
             if i == 1:
                 axes[i].set_title(
-                    f"Panel {i} - Frame: {frame} / {data.shape[2] - 1}, tof {(tofs[frame] + nmx_period) * 1e3:.1f} ms"
+                    f"Panel {i} - Frame: {frame} / {data.shape[2] - 1}, tof {(tofs[frame]) * 1e3:.1f} ms"
                 )
             else:
                 axes[i].set_title(f"Panel {i} - Frame: {frame} / {data.shape[2] - 1}")
@@ -376,10 +389,13 @@ def make_animation(
 
     # To save as GIF (uncomment if needed):
     anim.save(
-        folder / "3panel_animation.gif",
+        str(folder / filename),
         writer='pillow',
+        dpi=300,
         fps=5,
     )
+
+    plt.close()
 
 def animation_only(args, logger: logging.Logger):
     """Generates the animations only, using sampling output."""
@@ -405,6 +421,7 @@ def animation_only(args, logger: logging.Logger):
 
     logger.info("Generating animation...")
     make_animation(args,histo, tof_bins, Path(args.input_file).parent)
+    plt.close()
 
 
 
@@ -498,9 +515,11 @@ def main():
         logger.warning(f"Not wrapping tofs to NMX pulse length.")
     if args.xml:
         logger.info(f"Using geometry from xml file {args.xml}...")
+        instrument_xml = ' '.join(open(args.xml).readlines())
         geometry = mcstas_to_nexus_geometry.load_xml_geometry(Path(args.xml),logger=logger)
     else:
         geometry = read_mcstas_geometry_xml(Path(args.input_file))
+        instrument_xml = get_instrument_xml_nexus(file_path=args.input_file)
     create_nexus_file(args, args.output_file, sampled, args.json_file, logger=logger)
     mcstas_to_nexus_geometry.insert_geometry_into_nexus(geometry,Path(args.output_file),logger)
     if args.do_histogram:
