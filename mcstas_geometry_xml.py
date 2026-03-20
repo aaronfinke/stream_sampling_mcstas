@@ -551,3 +551,18 @@ def read_mcstas_geometry_xml(
             tree = fromstring(file[xml_path][...][0])
 
     return McStasInstrument.from_xml(tree)
+
+
+if __name__ == "__main__":
+    try:
+        from rich import print
+    except ImportError:
+        ...
+
+    import argparse
+    
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--file")
+    args = parser.parse_args()
+
+    print(read_mcstas_geometry_xml(args.file))
