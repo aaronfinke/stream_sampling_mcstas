@@ -2,7 +2,6 @@
 *.nxs
 *.hdf
 *.gif
-*.ipynb
 *.npy
 *.json
 *.sif
