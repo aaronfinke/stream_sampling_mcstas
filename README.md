@@ -1,6 +1,6 @@
 # McStas Stream Sampling to Nexus
 
-Uses the [StreamSampling.jl](https://juliadynamics.github.io/StreamSampling.jl/stable/) package to do weighted event sampling from McStas event data in NeXus format, and generate a NeXus TOFRaw event file. 
+Uses the [StreamSampling.jl](https://juliadynamics.github.io/StreamSampling.jl/stable/) package to do weighted event sampling from [McStas](https://www.mcstas.org) event data in NeXus format, and generate a NeXus TOFRaw event file. 
 
 Calling the StreamSampling Julia algorithm directly from Python (using `juliacall`) is about 30x faster than implementing a [similar algorithm in Python](https://github.com/aaronfinke/StreamSampling.py).
 
@@ -14,3 +14,11 @@ Also included: a dockerfile to generate a container that has all the needed pack
 - h5py, numpy, matplotlib
 - a json file describing metadata to save into the NeXus file
 - McStas event file in NeXus format
+
+## Usage
+`python /path/to/sampling_to_nexus.py -h`
+
+for McStas files with multiple configurations: 
+`python /path/to/sample_multiconfig_mcstas.py -h`
+
+Note the configurations should be in the form `/entry1/data/Config${confignum}_Panel${detnum}_event_signal_dat_list_p_x_y_n_id_t/events` 
