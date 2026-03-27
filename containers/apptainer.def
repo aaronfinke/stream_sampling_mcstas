@@ -1,0 +1,38 @@
+# Apptainer definition file that installs Pyjulia and needed dependencies to run stream_sampling_mcstas
+
+Bootstrap: docker
+From: python:3.13
+
+%files
+    requirements.txt /app/requirements.txt
+
+%post
+    export JULIA_DEPOT_PATH="/opt/julia"
+
+    mkdir -p /app
+    cd /app
+
+    pip install -r requirements.txt --no-cache-dir
+
+    jill install --upstream Official --confirm
+
+    # PyJulia setup (installs PyCall & other necessities)
+    python -c "import julia; julia.install()"
+
+    # Helpful Development Packages
+
+    julia --project="/opt/julia/." -e 'using Pkg; Pkg.add(["PythonCall", "Revise", "BenchmarkTools", "StreamSampling", "ChunkSplitters", "Random", "HDF5"])'
+    python -c "import juliacall as jl"
+
+%environment
+    export JULIA_DEPOT_PATH="/tmp:/opt/julia"
+    export PYTHON_JULIACALL_EXE=/usr/local/bin/julia
+    export PYTHON_JULIACALL_PROJECT=/opt/julia
+
+%runscript
+    cd /app
+    exec /bin/bash "$@"
+
+%startscript
+    cd /app
+    exec /bin/bash "$@"
