@@ -520,7 +520,12 @@ def main():
     else:
         geometry = read_mcstas_geometry_xml(Path(args.input_file))
         instrument_xml = get_instrument_xml_nexus(file_path=args.input_file)
-    create_nexus_file(args, args.output_file, sampled, args.json_file, logger=logger)
+    create_nexus_file(args=args, 
+                      output_file=args.output_file,
+                      sampled=sampled, 
+                      json_template=args.json_file, 
+                      instrument_xml=instrument_xml, 
+                      logger=logger)
     mcstas_to_nexus_geometry.insert_geometry_into_nexus(geometry,Path(args.output_file),logger)
     if args.do_histogram:
         tof_bins = get_tof_bins(args,sampled,logger=logger)
