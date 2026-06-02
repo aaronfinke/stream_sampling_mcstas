@@ -93,13 +93,23 @@ def redistribute_sampling(sampled):
     d2 = sampled[(pixids >= 2 * 1280 * 1280)]
     return [d0, d1, d2]
 
-def do_sampling(args:argparse.Namespace,filename: str, logger:logging.Logger, range: int = 3, n: int = 10 ** 5) -> List[np.ndarray]:
+def do_sampling(args:argparse.Namespace, filenames: List[str], logger:logging.Logger, range: int = 3, n: int = 10 ** 5) -> List[np.ndarray]:
     rangeval = f"0:{range - 1}"
-    if args.use_mask:
-        logger.info("Using mask around beam center.")
-        eval_statement = f'sample_all_frames_mask("{filename}", {rangeval}, {n}, AlgWRSWRSKIP())'
+    multifile = len(filenames) > 1
+    if multifile:
+        filenames_julia = "[" + ", ".join(f'"{f}"' for f in filenames) + "]"
+        if args.use_mask:
+            logger.info("Using mask around beam center.")
+            eval_statement = f'multifile_sample_all_frames_mask({filenames_julia}, {rangeval}, {n}, AlgWRSWRSKIP())'
+        else:
+            eval_statement = f'multifile_sample_all_frames({filenames_julia}, {rangeval}, {n}, AlgWRSWRSKIP())'
     else:
-        eval_statement = f'sample_all_frames("{filename}", {rangeval}, {n}, AlgWRSWRSKIP())'
+        filename = filenames[0]
+        if args.use_mask:
+            logger.info("Using mask around beam center.")
+            eval_statement = f'sample_all_frames_mask("{filename}", {rangeval}, {n}, AlgWRSWRSKIP())'
+        else:
+            eval_statement = f'sample_all_frames("{filename}", {rangeval}, {n}, AlgWRSWRSKIP())'
     logger.info(f"Running {eval_statement} ...")
     t1 = time.perf_counter()
     sampled_jl = jl.seval(eval_statement)
@@ -166,7 +176,7 @@ def get_tof_bins(args: argparse.Namespace, results: List[np.ndarray], logger:log
         print(result)
         toas = result["f1"]
         sample_max  = toas.max()
-        if sample_max + nmx_period > 0.145:
+        if sample_max + nmx_period > 2*NMX_PERIOD + 0.001:
             logger.warning(f"Panel {i} has tof_max of {sample_max + nmx_period}")
         sample_min = toas.min()
         tofmin = sample_min if sample_min < tofmin else tofmin
@@ -401,8 +411,8 @@ def animation_only(args, logger: logging.Logger):
     """Generates the animations only, using sampling output."""
     datas = []
     try:
-        logger.info(f"Loading file {args.input_file}...")
-        with h5py.File(args.input_file) as fp:
+        logger.info(f"Loading file {args.input_file[0]}...")
+        with h5py.File(args.input_file[0]) as fp:
             for i in range(3):
                 data = fp[f"entry/instrument/detector_panel_{i}/data"]
                 pixids = data["event_id"][:]
@@ -431,10 +441,11 @@ def parse_args():
     )
     parser.add_argument(
         "-i",
-        "--input_file", 
-        type=str, 
+        "--input_file",
+        type=str,
+        nargs="+",
         required=True,
-        help="Input HDF5 file path")
+        help="Input HDF5 file path(s). Multiple files are combined via multifile sampling.")
     
     parser.add_argument(
         "-o",
@@ -507,7 +518,7 @@ def main():
 
     if not Path(args.json_file).exists():
         raise FileNotFoundError(f"File {args.json_file} not found.")
-    sampled = do_sampling(args=args, filename=args.input_file, logger=logger, range=args.range, n=args.n_samples)
+    sampled = do_sampling(args=args, filenames=args.input_file, logger=logger, range=args.range, n=args.n_samples)
 
     if Path(args.output_file).exists():
         logger.warning(f"Overwriting {args.output_file}...")
@@ -518,8 +529,9 @@ def main():
         instrument_xml = ' '.join(open(args.xml).readlines())
         geometry = mcstas_to_nexus_geometry.load_xml_geometry(Path(args.xml),logger=logger)
     else:
-        geometry = read_mcstas_geometry_xml(Path(args.input_file))
-        instrument_xml = get_instrument_xml_nexus(file_path=args.input_file)
+        first_input = args.input_file[0]
+        geometry = read_mcstas_geometry_xml(Path(first_input))
+        instrument_xml = get_instrument_xml_nexus(file_path=first_input)
     create_nexus_file(args=args, 
                       output_file=args.output_file,
                       sampled=sampled, 
