@@ -185,7 +185,12 @@ def main():
                                             json_template=args.json_file, 
                                             instrument_xml=instrument_xml,
                                             logger=logger)
-        mcstas_to_nexus_geometry.insert_geometry_into_nexus(geometry,output_file,logger)
+        mcstas_to_nexus_geometry.insert_geometry_into_nexus(geometry,output_file,logger,
+                                                            simulation_detector_names={
+                                                                0: f"nD_Mantid_config{confignum}_panel0",
+                                                                1: f"nD_Mantid_config{confignum}_panel1",
+                                                                2: f"nD_Mantid_config{confignum}_panel2"
+                                                            })
         if args.do_histogram:
             tof_bins = sampling_to_nexus.get_tof_bins(args,sampled,logger=logger)
             logger.info("Generating histogram...")
