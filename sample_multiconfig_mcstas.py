@@ -145,9 +145,11 @@ def main():
     logger = _get_logger(args)
 
     detnums = [str(i) for i in range(3)]
-    confignums = [str(i) for i in range(1,12)]
-
-    s = Template("entry1/data/Config${confignum}_Panel${detnum}_event_signal_dat_list_p_x_y_n_id_t/events")
+    with h5py.File(args.input_file) as fp:
+        confignums = sorted({k.split("_")[0].removeprefix("config") for k in fp["entry1/data"]
+                             if k.startswith("config") and "_event_signal_dat_list" in k}, key=int)
+        
+    s = Template("entry1/data/config${confignum}_Detector_${detnum}_event_signal_dat_list_p_x_y_n_id_t/events")
     
     if args.xml:
         logger.info(f"Using geometry from xml file {args.xml}...")
