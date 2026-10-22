@@ -2,12 +2,15 @@ import argparse
 import h5py
 import warnings
 import logging
+import numpy as np
 import scipp as sc
+from scipy.spatial.transform import Rotation
 
 import scippnexus as snx
 from pathlib import Path
 from mcstas_geometry_xml import (
     read_mcstas_geometry_xml,
+    set_geometry_from_mcstas_components,
     McStasInstrument,
     DetectorDesc,
     SourceDesc,
@@ -32,8 +35,22 @@ def _get_logger(args: argparse.Namespace) -> logging.Logger:
     return logger
 
 
-def load_xml_geometry(file_path: Path, logger: logging.Logger) -> McStasInstrument:
+def load_xml_geometry(
+    file_path: Path, logger: logging.Logger, mcstas_file: Path | None = None
+) -> McStasInstrument:
+    """Load the geometry from an xml file or McStas NeXus output.
+
+    A bare xml file holds neither the sample frame nor exact component poses;
+    pass the McStas NeXus output as ``mcstas_file`` to read them from there.
+    """
     geometry = read_mcstas_geometry_xml(file_path)
+    if mcstas_file is not None:
+        set_geometry_from_mcstas_components(geometry, mcstas_file)
+    if geometry.sample.rotation_matrix is None:
+        logger.warning(
+            "No sample frame rotation: geometry stays in the McStas global "
+            "orientation, so the beam may not be along z."
+        )
     logger.debug("Successfully loaded geometry: %s", geometry)
     return geometry
 
@@ -161,11 +178,27 @@ def _overwrite_detector_transformations(
     rotation_vector = det_desc.rotation_vector
     orientations = transformations["orientation"]
     orientations.attrs["depends_on"] = f"{nexus_det.name}/transformations/stageZ"
-    orientations.attrs["vector"] = list(rotation_vector.value)
     rot_angle = (
         -det_desc.rotation_angle if handedness == "right" else det_desc.rotation_angle
     )
-    orientations[...] = rot_angle.to(unit=orientations.attrs["units"]).value
+    # Orientation in the McStas global frame, then in the sample frame.
+    global_rotation = sc.spatial.rotations_from_rotvecs(
+        rotation_vectors=sc.vector(
+            value=rotation_vector.value
+            / np.linalg.norm(rotation_vector.value)
+            * rot_angle.to(unit="rad").value,
+            unit="rad",
+        )
+    )
+    rotvec = Rotation.from_matrix(
+        sample_desc.to_sample_frame(global_rotation).value
+    ).as_rotvec()
+    angle = np.linalg.norm(rotvec)
+    axis = rotvec / angle if angle > 0 else np.array([0.0, 0.0, 1.0])
+    orientations.attrs["vector"] = list(axis)
+    orientations[...] = sc.scalar(angle, unit="rad").to(
+        unit=orientations.attrs["units"]
+    ).value
 
     stageZ = transformations["stageZ"]
     original_attrs = stageZ.attrs
@@ -247,6 +280,13 @@ def _overwrite_source_transformations(
     source_position = sample_desc.position_from_sample(source_desc.position)
     x, y, z = source_position.value
     # Assuming only translation to x, z axis
+    if abs(y) > 1e-6:
+        warnings.warn(
+            f"Source y position {y} {source_position.unit} is not written to the "
+            "NeXus file (only x and z are).",
+            RuntimeWarning,
+            stacklevel=2,
+        )
     translation_x = transformations["translation_x"]
     x_original_attrs = translation_x.attrs
     translation_x_value = sc.scalar(value=x, unit=source_position.unit)
@@ -496,7 +536,15 @@ def main():
         logger.debug(
             "Loading XML geometry from input file: %s", input_file_path.as_posix()
         )
-        simulation_geometry = load_xml_geometry(input_file_path, logger)
+        # A bare xml file has no exact poses or sample frame; read them from the McStas file.
+        mcstas_file = (
+            Path(args.crystal_rotation_file_path)
+            if input_file_path.suffix == ".xml" and args.crystal_rotation_file_path
+            else None
+        )
+        simulation_geometry = load_xml_geometry(
+            input_file_path, logger, mcstas_file=mcstas_file
+        )
 
     if (output_file_path := Path(args.output_file)).exists():
         warnings.warn(

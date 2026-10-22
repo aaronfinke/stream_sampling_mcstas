@@ -154,7 +154,8 @@ def main():
     if args.xml:
         logger.info(f"Using geometry from xml file {args.xml}...")
         instrument_xml = ' '.join(open(args.xml).readlines())
-        geometry = mcstas_to_nexus_geometry.load_xml_geometry(Path(args.xml),logger=logger)
+        geometry = mcstas_to_nexus_geometry.load_xml_geometry(Path(args.xml),logger=logger,
+                                                              mcstas_file=Path(args.input_file))
     else:
         geometry = mcstas_geometry_xml.read_mcstas_geometry_xml(Path(args.input_file))
         instrument_xml = sampling_to_nexus.get_instrument_xml_nexus(file_path=args.input_file)

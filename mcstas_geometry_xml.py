@@ -341,6 +341,10 @@ class SampleDesc:
     name: str
     # From <location> under <component type="sampleMantid-type" ...>
     position: sc.Variable
+    # Orientation of the sample frame in the McStas global frame (local -> global),
+    # same convention as ``DetectorDesc.rotation_matrix``.
+    # The McStas Mantid IDF does not write it, so it is set afterwards from the
+    # McStas NeXus output with ``set_geometry_from_mcstas_components``.
     rotation_matrix: sc.Variable | None
 
     @classmethod
@@ -364,8 +368,23 @@ class SampleDesc:
             rotation_matrix=rotation_matrix,
         )
 
+    def to_sample_frame(self, other: sc.Variable) -> sc.Variable:
+        """Express a direction or rotation given in the McStas global frame
+        in the sample frame.
+
+        The beam travels along z of the sample frame, which is not the global z
+        when the guide is curved (NMX: 0.3 deg about y).
+        Without a sample frame rotation this is the identity.
+        """
+        if self.rotation_matrix is None:
+            return other
+        global_to_sample = sc.spatial.linear_transform(
+            value=self.rotation_matrix.value.T
+        )
+        return global_to_sample * other
+
     def position_from_sample(self, other: sc.Variable) -> sc.Variable:
-        """Position of ``other`` relative to the sample.
+        """Position of ``other`` relative to the sample, in the sample frame.
 
         All positions and distance are stored relative to the sample position.
 
@@ -375,7 +394,7 @@ class SampleDesc:
             Position of the other object in 3D vector.
 
         """
-        return other - self.position
+        return self.to_sample_frame(other - self.position)
 
 
 @dataclass
@@ -497,11 +516,11 @@ class McStasInstrument:
         except StopIteration as e:
             raise KeyError(f"Detector {det_name} not found.") from e
         return {
-            "fast_axis": detector.fast_axis,
-            "slow_axis": detector.slow_axis,
+            "fast_axis": self.sample.to_sample_frame(detector.fast_axis),
+            "slow_axis": self.sample.to_sample_frame(detector.slow_axis),
             "origin_position": self.sample.position_from_sample(detector.position),
-            "position": _pixel_positions(
-                detector, self.sample.position_from_sample(detector.position)
+            "position": self.sample.position_from_sample(
+                _pixel_positions(detector, detector.position)
             ),
             "detector_shape": sc.scalar(detector.detector_shape),
             "x_pixel_size": detector.step_x,
@@ -550,7 +569,135 @@ def read_mcstas_geometry_xml(
         with h5py.File(file_path) as file:
             tree = fromstring(file[xml_path][...][0])
 
-    return McStasInstrument.from_xml(tree)
+    instrument = McStasInstrument.from_xml(tree)
+    if pathlib.Path(file_path).suffix != ".xml":
+        set_geometry_from_mcstas_components(instrument, file_path)
+    return instrument
+
+
+def read_mcstas_component_poses(
+    file_path: str | pathlib.Path,
+    components_path: str = "entry1/instrument/components",
+) -> dict[str, tuple[NDArray, NDArray]]:
+    """Absolute pose of every component in the McStas NeXus output.
+
+    McStas stores each component under ``<index>_<name>`` with its absolute
+    ``Position`` and ``Rotation``. ``Rotation`` maps global coordinates to the
+    component's local coordinates (its rows are the local axes), so its
+    transpose (local -> global) is returned, the convention of
+    ``DetectorDesc.rotation_matrix``.
+
+    Returns
+    -------
+    :
+        ``{name: (position, local_to_global)}`` in the file's length unit.
+    """
+    with h5py.File(file_path) as file:
+        components = file[components_path]
+        return {
+            key.split("_", 1)[-1]: (
+                np.asarray(group["Position"][()], dtype=float),
+                np.asarray(group["Rotation"][()], dtype=float).T,
+            )
+            for key, group in components.items()
+            if "Position" in group and "Rotation" in group
+        }
+
+
+def set_geometry_from_mcstas_components(
+    instrument: McStasInstrument, file_path: str | pathlib.Path
+) -> None:
+    """Take sample, source and detector poses from the McStas NeXus output, in place.
+
+    The Mantid IDF McStas writes is not exact enough for this:
+
+    - it places the sample at the origin but keeps the global orientation, so
+      after a curved guide the beam at the sample is not along z
+      (NMX: 0.3 deg about y);
+    - its positions are rounded (to 1 mm along z) and its rotations are off
+      by ~0.001 deg.
+
+    The component table holds the exact poses, including the sample frame,
+    so every position and orientation written to NeXus becomes exact and is
+    expressed in the sample frame (``SampleDesc.position_from_sample``).
+    The IDF still provides the pixel layout. Components that are not in the
+    table keep their IDF pose; if the sample is not there, nothing changes
+    and a warning is issued.
+    """
+    import warnings
+
+    try:
+        poses = read_mcstas_component_poses(file_path)
+    except (KeyError, OSError) as e:
+        poses = {}
+        reason = str(e)
+    else:
+        reason = "no sample component in the component table"
+    if instrument.sample.name not in poses:
+        warnings.warn(
+            f"Could not read component poses from {file_path} ({reason}). "
+            "Geometry stays as in the IDF: global orientation, so the beam may "
+            "not be along z, and positions rounded to 1 mm.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return
+
+    unit = instrument.sample.position.unit
+    idf_sample_position = instrument.sample.position
+
+    def absolute(idf_position: sc.Variable) -> sc.Variable:
+        # IDF positions are global offsets from the IDF sample position
+        return idf_position - idf_sample_position + instrument.sample.position
+
+    sample_position, sample_rotation = poses[instrument.sample.name]
+    instrument.sample.position = sc.vector(sample_position, unit=unit)
+    instrument.sample.rotation_matrix = sc.spatial.linear_transform(
+        value=sample_rotation
+    )
+
+    source = instrument.source
+    if source.name in poses:
+        source.position = sc.vector(poses[source.name][0], unit=unit)
+    else:
+        warnings.warn(
+            f"Source {source.name} not in the component table, using its IDF position.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        source.position = absolute(source.position)
+
+    from scipy.spatial.transform import Rotation
+
+    for detector in instrument.detectors:
+        if detector.name not in poses:
+            warnings.warn(
+                f"Detector {detector.name} not in the component table, "
+                "using its IDF pose.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            detector.position = absolute(detector.position)
+            continue
+        position, rotation = poses[detector.name]
+        detector.position = sc.vector(position, unit=unit)
+        detector.rotation_matrix = sc.spatial.linear_transform(value=rotation)
+        rotvec = Rotation.from_matrix(rotation).as_rotvec(degrees=True)
+        angle = float(np.linalg.norm(rotvec))
+        detector.rotation_vector = sc.vector(
+            rotvec / angle if angle > 0 else [0.0, 0.0, 1.0]
+        )
+        # Same sign convention as _rotation_angle: rotation_matrix rotates by
+        # -rotation_angle about rotation_vector
+        detector.rotation_angle = sc.scalar(-angle, unit="deg").to(
+            unit=detector.rotation_angle.unit
+        )
+        detector.fast_axis = detector.rotation_matrix * _AXISNAME_TO_UNIT_VECTOR[
+            detector.fast_axis_name
+        ]
+        detector.slow_axis = detector.rotation_matrix * _AXISNAME_TO_UNIT_VECTOR[
+            detector.slow_axis_name
+        ]
 
 
 if __name__ == "__main__":

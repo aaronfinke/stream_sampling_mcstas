@@ -23,3 +23,11 @@ for McStas files with multiple configurations:
 `python /path/to/sample_multiconfig_mcstas.py -h`
 
 Note that for the multiconfiguration the configurations should be in the form `/entry1/data/Config${confignum}_Panel${detnum}_event_signal_dat_list_p_x_y_n_id_t/events` 
+## Geometry
+Detector, source and sample poses are taken from the McStas component table
+(`entry1/instrument/components/*/Position`, `Rotation` in the McStas NeXus output) and written
+in the **sample frame**: origin at `sampleMantid`, axes of `sampleMantid`, so the beam at the
+sample runs along +z. The Mantid IDF McStas writes keeps the global orientation (after NMX's
+curved guide the beam is 0.3 deg off z) and rounds positions to 1 mm, so it is only used for the
+pixel layout. With `--xml`, the poses are still read from the McStas input file; a bare IDF
+without a McStas file falls back to the IDF poses and logs a warning.
