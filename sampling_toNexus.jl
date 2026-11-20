@@ -268,7 +268,6 @@ function multifile_sample_with_weight(filenames, datasets, n, alg; exclude=nothi
     parts = collect(chunks(1:length(jobs), n=min(Threads.nthreads(), length(jobs))))
     samplers = [ReservoirSampler{NTuple{2, Float64}}(Xoshiro(rand(UInt)), n, alg) for _ in parts]
     weights = zeros(length(parts))
-    chunksize = 5*10^5
     # Loop-local names must not be assigned anywhere else in this function: Julia would
     # make them one variable shared by all threads.
     Threads.@threads for k in eachindex(parts)
@@ -277,25 +276,45 @@ function multifile_sample_with_weight(filenames, datasets, n, alg; exclude=nothi
         for j in parts[k]
             filename, file_datasets = jobs[j]
             @debug "Sampling $(filename)"
-            h5open(filename, "r") do file
-                for dataset in file_datasets
-                    dset = file[dataset]
-                    totalsize = size(dset)[2]
-                    totalsize == 0 && continue
-                    for ch in chunks(1:totalsize, n=ceil(Int, totalsize/chunksize))
-                        for c in eachcol(dset[:, ch])
-                            exclude !== nothing && c[5] in exclude && continue
-                            fit!(sampler, (c[5], c[6]), c[1])
-                            w += c[1]
-                        end
-                    end
-                end
-            end
+            w += _sample_file!(sampler, filename, file_datasets, exclude)
         end
         weights[k] = w
     end
     merged = length(samplers) == 1 ? only(samplers) : merge(samplers...)
     return value(merged), sum(weights)
+end
+
+# Feeds the events of one file into the sampler, returns their summed weight. A function
+# barrier (no closure) keeps the inner loop type-stable and allocation-free.
+function _sample_file!(sampler, filename::String, file_datasets::Vector{String}, exclude)
+    w = 0.0
+    chunksize = 5*10^5
+    file = h5open(filename, "r")
+    try
+        for dataset in file_datasets
+            dset = file[dataset]
+            totalsize = size(dset)[2]
+            totalsize == 0 && continue
+            for ch in chunks(1:totalsize, n=ceil(Int, totalsize/chunksize))
+                w += _fit_block!(sampler, dset[:, ch], exclude)
+            end
+        end
+    finally
+        close(file)
+    end
+    return w
+end
+
+function _fit_block!(sampler, block::Matrix{Float64}, exclude)
+    w = 0.0
+    @inbounds for j in axes(block, 2)
+        id = block[5, j]
+        exclude !== nothing && id in exclude && continue
+        p = block[1, j]
+        fit!(sampler, (id, block[6, j]), p)
+        w += p
+    end
+    return w
 end
 
 # using BenchmarkTools
