@@ -23,6 +23,37 @@ for McStas files with multiple configurations:
 `python /path/to/sample_multiconfig_mcstas.py -h`
 
 Note that for the multiconfiguration the configurations should be in the form `/entry1/data/Config${confignum}_Panel${detnum}_event_signal_dat_list_p_x_y_n_id_t/events` 
+
+## Output formats
+`sampling_to_nexus.py --format {nmx,mandi}` (default `nmx`). Each format is a class in
+`instrument_output/` (`OutputFormat`: `sample()` draws the events, `write()` stores them):
+
+- `nmx` (`NMXOutput`): ESS NMX, NeXus streaming layout from the json template (`-j`), three
+  1280 x 1280 panels, event times wrapped to 14 Hz in ns, NeXus geometry from McStas.
+  `sample_multiconfig_mcstas.py` uses the same class.
+- `mandi` (`MANDIOutput`): SNS MaNDi (BL-11B), an `NXsnsevent` file laid out like the facility's
+  `MANDI_<run>.nxs.h5`, for Mantid `Load` / `LoadEventNexus`. Input: McStas NeXus output of the
+  MaNDi model (`bank<N>_events` Monitor_nD event lists, pixel ids `65536*bank + col*256 + row`).
+  ```
+  python sampling_to_nexus.py --format mandi -i run/mccode.h5 -n 50_000_000 --run-number 900001
+  # -> MANDI_900001.nxs.h5
+  ```
+  - Events: `entry/bank<N>_events`, time of flight in µs counted from the pulse that emitted the
+    neutron (not wrapped, as in the facility files).
+  - Exposure: with McStas weights in n/s, the n sampled events correspond to `n / rate` seconds.
+    That sets the number of 60 Hz pulses the events are spread over, and the proton charge
+    (`beam_power` per pulse), so `NormaliseByCurrent` works. Several input files are treated
+    as repeats of the same setting.
+  - DASlogs: `proton_charge`, `frequency` (per pulse), `omega`, `chi`, `phi` (for
+    `SetGoniometer(Axis0="omega,0,1,0,1", Axis1="chi,0,0,1,1", Axis2="phi,0,1,0,1")`),
+    `Wavelength`, `BeamPower`, `Speed1-3`, all taken from the McStas parameters. The McStas
+    parameters are also copied to `entry/mcstas`.
+  - Geometry: the IDF McStas embedded (`--IDF`), or `-x`.
+  - Not written: beam monitors (the McStas monitors are histograms without detector efficiency).
+  - Mantid 6.14 with the `MANDI_Parameters.xml` that `DownloadInstrument` puts in `~/.mantid`
+    fails on embedded IDFs ("Wrong type of parameter"). Real facility files fail the same way.
+    `LoadEventNexus(..., LoadNexusInstrumentXML=False)` uses Mantid's own MaNDi IDF instead;
+    follow it with `LoadIsawDetCal`.
 ## Geometry
 Detector, source and sample poses are taken from the McStas component table
 (`entry1/instrument/components/*/Position`, `Rotation` in the McStas NeXus output) and written

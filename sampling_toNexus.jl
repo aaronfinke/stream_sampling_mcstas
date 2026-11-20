@@ -252,6 +252,38 @@ function multifile_sample_all_frames_mask(filenames, indices, n, alg)
     return value(merge(rs...))
 end
 
+"""
+    multifile_sample_with_weight(filenames, datasets, n, alg)
+
+Weighted sampling of `(id, t)` from McStas event lists into one reservoir. `datasets[i]` lists
+the event datasets of `filenames[i]` (banks without events are absent from a McStas file).
+Also returns the summed weight `p` of all events read: with weights in n/s this is the event
+rate, so `n / total_weight` is the measuring time the sample stands for.
+"""
+function multifile_sample_with_weight(filenames, datasets, n, alg)
+    rng = Xoshiro(rand(UInt))
+    rs = ReservoirSampler{NTuple{2, Float64}}(rng, n, alg)
+    total_weight = 0.0
+    chunksize = 5*10^5
+    for (filename, file_datasets) in zip(filenames, datasets)
+        h5open(String(filename), "r") do file
+            for dataset in file_datasets
+                @info "Sampling $(filename): $(dataset)..."
+                dset = file[String(dataset)]
+                totalsize = size(dset)[2]
+                totalsize == 0 && continue
+                for ch in chunks(1:totalsize, n=ceil(Int, totalsize/chunksize))
+                    for c in eachcol(dset[:, ch])
+                        fit!(rs, (c[5], c[6]), c[1])
+                        total_weight += c[1]
+                    end
+                end
+            end
+        end
+    end
+    return value(rs), total_weight
+end
+
 # using BenchmarkTools
 # @btime sample_frames("mccode.h5", 0:2, 10^5, AlgWRSWRSKIP());
 
