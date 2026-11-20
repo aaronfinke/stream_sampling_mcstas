@@ -3,9 +3,9 @@ ESS NMX output: NeXus streaming layout from a json template, three 1280 x 1280 d
 panels, event times wrapped to the 14 Hz ESS period (in ns), NeXus geometry from McStas.
 """
 import argparse
+import builtins
 import json
 import logging
-import time
 from pathlib import Path
 from typing import Dict, List, Sequence
 
@@ -19,7 +19,7 @@ import mcstas_to_nexus_geometry
 from mcstas_geometry_xml import read_mcstas_geometry_xml
 
 from .base import OutputFormat
-from .julia import jl
+from .mcstas_input import resolve_event_lists, sample_event_lists
 
 mpl.rcParams["animation.embed_limit"] = 500
 
@@ -41,15 +41,7 @@ class NMXOutput(OutputFormat):
 
     def sample_datasets(self, filename: str, datasets: List[str], n: int) -> List[np.ndarray]:
         """Samples the given event datasets of one file (e.g. one configuration of several)"""
-        if self.option("use_mask"):
-            # XXX include mask support... somehow.
-            self.logger.warning("Masks not currently supported.")
-        eval_statement = f'sample_all_frames_generic("{filename}", "{datasets}", {n}, AlgWRSWRSKIP())'
-        self.logger.info(f"Running {eval_statement} ...")
-        t1 = time.perf_counter()
-        sampled_jl = jl.sample_all_frames_generic(filename, datasets, n, jl.AlgWRSWRSKIP())
-        self.logger.info(f"... done. Took {time.perf_counter() - t1:.2f} s.")
-        return _log_panels(redistribute_sampling(sampled_jl.to_numpy()), self.logger)
+        return _sample(self.args, [(filename, datasets)], self.logger, n)
 
     def geometry(self, input_file: str | Path):
         """McStas component poses and pixel layout (cached per input file)"""
@@ -143,29 +135,25 @@ def redistribute_sampling(sampled):
     d2 = sampled[(pixids >= 2 * 1280 * 1280)]
     return [d0, d1, d2]
 
-def do_sampling(args:argparse.Namespace, filenames: List[str], logger:logging.Logger, range: int = 3, n: int = 10 ** 5) -> List[np.ndarray]:
-    rangeval = f"0:{range - 1}"
-    multifile = len(filenames) > 1
-    if multifile:
-        filenames_julia = "[" + ", ".join(f'"{f}"' for f in filenames) + "]"
-        if args.use_mask:
-            logger.info("Using mask around beam center.")
-            eval_statement = f'multifile_sample_all_frames_mask({filenames_julia}, {rangeval}, {n}, AlgWRSWRSKIP())'
-        else:
-            eval_statement = f'multifile_sample_all_frames({filenames_julia}, {rangeval}, {n}, AlgWRSWRSKIP())'
-    else:
-        filename = filenames[0]
-        if args.use_mask:
-            logger.info("Using mask around beam center.")
-            eval_statement = f'sample_all_frames_mask("{filename}", {rangeval}, {n}, AlgWRSWRSKIP())'
-        else:
-            eval_statement = f'sample_all_frames("{filename}", {rangeval}, {n}, AlgWRSWRSKIP())'
-    logger.info(f"Running {eval_statement} ...")
-    t1 = time.perf_counter()
-    sampled_jl = jl.seval(eval_statement)
-    logger.info(f"... done. Took {time.perf_counter() - t1:.2f} s.")
-    sampled = sampled_jl.to_numpy()
+def _sample(args: argparse.Namespace, inputs, logger: logging.Logger, n: int) -> List[np.ndarray]:
+    """
+    Weighted sampling over (input file, datasets) pairs, McStas MPI node files resolved.
+    With --use-mask, ids in the beam-centre mask of panel 1 (createMask) are skipped.
+    """
+    exclude = None
+    if getattr(args, "use_mask", False):
+        from .julia import jl
+        logger.info("Using mask around beam center.")
+        exclude = jl.createMask()
+    pieces = resolve_event_lists(inputs, logger)
+    sampled, _ = sample_event_lists(pieces, n, logger, exclude_ids=exclude)
     return _log_panels(redistribute_sampling(sampled), logger)
+
+
+def do_sampling(args:argparse.Namespace, filenames: List[str], logger:logging.Logger, range: int = 3, n: int = 10 ** 5) -> List[np.ndarray]:
+    """Samples panels 0..range-1 of all input files into one weighted sample"""
+    datasets = [f"entry1/data/Detector_{i}_event_signal_dat_list_p_x_y_n_id_t/events" for i in builtins.range(range)]
+    return _sample(args, [(f, datasets) for f in filenames], logger, n)
 
 
 def load_json_dict(json_path):

@@ -29,7 +29,6 @@ bank_error / bank_unmapped, users, chopper NXdisk_chopper groups.
 import argparse
 import logging
 import re
-import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -39,7 +38,7 @@ import h5py
 import numpy as np
 
 from .base import OutputFormat
-from .julia import jl
+from .mcstas_input import resolve_event_lists, sample_event_lists
 
 PIXELS_PER_BANK = 65536
 PROTON_ENERGY_MEV = 1300.0    # SNS linac, DASlogs/ProtonBeamEnergy of recent MaNDi runs
@@ -162,24 +161,20 @@ class MANDIOutput(OutputFormat):
                           key=lambda k: int(EVENT_LIST.match(k.split("/")[2]).group(1)))
 
     def sample(self, filenames: Sequence[str], n: int) -> MANDISample:
-        filenames = [str(Path(f).resolve()) for f in filenames]
-        datasets = [self.event_datasets(f) for f in filenames]
-        total = 0
-        for filename, file_datasets in zip(filenames, datasets):
-            with h5py.File(filename) as f:
-                total += sum(f[d].shape[0] for d in file_datasets)
-            self.logger.info(f"{filename}: {len(file_datasets)} banks with events")
-        if total == 0:
-            raise ValueError(f"No bank event lists found in {filenames}")
-        if n > total:
-            self.logger.warning(f"Sampling {n} events from only {total} McStas events: "
-                                f"repeated events, the statistics look better than they are.")
-        self.logger.info(f"Sampling {n} of {total} events ...")
-        t1 = time.perf_counter()
-        sampled_jl, total_weight = jl.multifile_sample_with_weight(filenames, datasets, n, jl.AlgWRSWRSKIP())
-        self.logger.info(f"... done. Took {time.perf_counter() - t1:.2f} s.")
-        return MANDISample(events=sampled_jl.to_numpy(), total_weight=float(total_weight),
-                           n_files=len(filenames))
+        """
+        Each input file is one McStas run (an MPI run's mccode.h5 with its node files counts
+        once); several runs are treated as repeats of the same setting.
+        """
+        inputs = []
+        for filename in filenames:
+            datasets = self.event_datasets(filename)
+            self.logger.info(f"{filename}: {len(datasets)} banks with events")
+            inputs.append((filename, datasets))
+        if not any(datasets for _, datasets in inputs):
+            raise ValueError(f"No bank event lists found in {list(filenames)}")
+        pieces = resolve_event_lists(inputs, self.logger)
+        events, total_weight = sample_event_lists(pieces, n, self.logger)
+        return MANDISample(events=events, total_weight=total_weight, n_files=len(filenames))
 
     def _start_time(self) -> datetime:
         start = self.option("start_time")

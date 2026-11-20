@@ -253,35 +253,49 @@ function multifile_sample_all_frames_mask(filenames, indices, n, alg)
 end
 
 """
-    multifile_sample_with_weight(filenames, datasets, n, alg)
+    multifile_sample_with_weight(filenames, datasets, n, alg; exclude=nothing)
 
-Weighted sampling of `(id, t)` from McStas event lists into one reservoir. `datasets[i]` lists
-the event datasets of `filenames[i]` (banks without events are absent from a McStas file).
-Also returns the summed weight `p` of all events read: with weights in n/s this is the event
-rate, so `n / total_weight` is the measuring time the sample stands for.
+Weighted sampling of `(id, t)` from McStas event lists. `datasets[i]` lists the event
+datasets to read from `filenames[i]`, read in full (banks without events are absent from a
+McStas file). The files are shared over the Julia threads, each with its own reservoir; the
+reservoirs are merged at the end. Events whose id is in `exclude` (e.g. `createMask()`) are
+skipped. Also returns the summed weight `p` of all events read: with weights in n/s this is
+the event rate, so `n / total_weight` is the measuring time the sample stands for.
 """
-function multifile_sample_with_weight(filenames, datasets, n, alg)
-    rng = Xoshiro(rand(UInt))
-    rs = ReservoirSampler{NTuple{2, Float64}}(rng, n, alg)
-    total_weight = 0.0
+function multifile_sample_with_weight(filenames, datasets, n, alg; exclude=nothing)
+    jobs = [(String(f), [String(d) for d in ds]) for (f, ds) in zip(filenames, datasets)]
+    isempty(jobs) && error("No event lists to sample")
+    parts = collect(chunks(1:length(jobs), n=min(Threads.nthreads(), length(jobs))))
+    samplers = [ReservoirSampler{NTuple{2, Float64}}(Xoshiro(rand(UInt)), n, alg) for _ in parts]
+    weights = zeros(length(parts))
     chunksize = 5*10^5
-    for (filename, file_datasets) in zip(filenames, datasets)
-        h5open(String(filename), "r") do file
-            for dataset in file_datasets
-                @info "Sampling $(filename): $(dataset)..."
-                dset = file[String(dataset)]
-                totalsize = size(dset)[2]
-                totalsize == 0 && continue
-                for ch in chunks(1:totalsize, n=ceil(Int, totalsize/chunksize))
-                    for c in eachcol(dset[:, ch])
-                        fit!(rs, (c[5], c[6]), c[1])
-                        total_weight += c[1]
+    # Loop-local names must not be assigned anywhere else in this function: Julia would
+    # make them one variable shared by all threads.
+    Threads.@threads for k in eachindex(parts)
+        local sampler = samplers[k]
+        local w = 0.0
+        for j in parts[k]
+            filename, file_datasets = jobs[j]
+            @debug "Sampling $(filename)"
+            h5open(filename, "r") do file
+                for dataset in file_datasets
+                    dset = file[dataset]
+                    totalsize = size(dset)[2]
+                    totalsize == 0 && continue
+                    for ch in chunks(1:totalsize, n=ceil(Int, totalsize/chunksize))
+                        for c in eachcol(dset[:, ch])
+                            exclude !== nothing && c[5] in exclude && continue
+                            fit!(sampler, (c[5], c[6]), c[1])
+                            w += c[1]
+                        end
                     end
                 end
             end
         end
+        weights[k] = w
     end
-    return value(rs), total_weight
+    merged = length(samplers) == 1 ? only(samplers) : merge(samplers...)
+    return value(merged), sum(weights)
 end
 
 # using BenchmarkTools
